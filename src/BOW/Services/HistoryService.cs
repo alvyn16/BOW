@@ -1,0 +1,79 @@
+using System.Text.Json;
+
+namespace BOW.Services;
+
+public sealed record HistoryEntry(string Url, string Title, string? FaviconUrl, DateTimeOffset VisitedAt);
+
+/// <summary>Recent successful page visits, saved between browser sessions.</summary>
+public sealed class HistoryService
+{
+    public static HistoryService Instance { get; } = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BOW", "history.json"));
+
+    private const int MaxEntries = 200;
+    private readonly string _path;
+    private readonly List<HistoryEntry> _entries;
+
+    public HistoryService(string path)
+    {
+        _path = path;
+        try
+        {
+            _entries = File.Exists(path)
+                ? JsonSerializer.Deserialize<List<HistoryEntry>>(File.ReadAllText(path)) ?? []
+                : [];
+        }
+        catch (Exception)
+        {
+            _entries = [];
+        }
+    }
+
+    public IReadOnlyList<HistoryEntry> Recent(int count = 5) =>
+        _entries.Take(Math.Max(0, count)).ToArray();
+
+    public void RecordVisit(string url, string? title, string? faviconUrl)
+    {
+        if (!IsWebPage(url)) return;
+        _entries.RemoveAll(entry => string.Equals(entry.Url, url, StringComparison.OrdinalIgnoreCase));
+        _entries.Insert(0, new HistoryEntry(url, DisplayTitle(url, title), faviconUrl, DateTimeOffset.UtcNow));
+        if (_entries.Count > MaxEntries) _entries.RemoveRange(MaxEntries, _entries.Count - MaxEntries);
+        Save();
+    }
+
+    public void UpdateDetails(string url, string? title, string? faviconUrl)
+    {
+        var index = _entries.FindIndex(entry => string.Equals(entry.Url, url, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return;
+        var current = _entries[index];
+        _entries[index] = current with
+        {
+            Title = DisplayTitle(url, title),
+            FaviconUrl = string.IsNullOrWhiteSpace(faviconUrl) ? current.FaviconUrl : faviconUrl
+        };
+        Save();
+    }
+
+    private static bool IsWebPage(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static string DisplayTitle(string url, string? title) =>
+        string.IsNullOrWhiteSpace(title) || title == "New Tab"
+            ? new Uri(url).Host
+            : title;
+
+    private void Save()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+            var temp = _path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(_entries));
+            File.Move(temp, _path, true);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Could not save history: {ex.Message}");
+        }
+    }
+}

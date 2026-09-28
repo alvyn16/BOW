@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>BOW</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Icons\brow-icon-white.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <GenerateProjectPriFile>false</GenerateProjectPriFile>
+    <AppxPackage>false</AppxPackage>
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
+    <ProjectRequiresPriGen>false</ProjectRequiresPriGen>
+    <UseRidGraph>true</UseRidGraph>
+    <EnableDefaultXamlItems>false</EnableDefaultXamlItems>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyVersion>0.1.0</AssemblyVersion>
+    <FileVersion>0.1.0</FileVersion>
+    <InformationalVersion>0.1.0</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.240627000" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Keep the legacy palette file as source material; ThemeBrushes supplies runtime colors. -->
+    <Page Remove="Resources\Themes\BowColors.xaml" />
+    <None Include="Resources\Themes\BowColors.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\Icons\brow-icon-*.ico;Assets\Icons\brow-icon-*.png"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <UsingTask TaskName="Microsoft.Build.Packaging.Pri.Tasks.ExpandPriContent" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Inputs ParameterType="Microsoft.Build.Framework.ITaskItem[]" />
+      <MakePriExeFullPath ParameterType="System.String" />
+      <MakePriExtensionPath ParameterType="System.String" />
+      <IntermediateDirectory ParameterType="System.String" />
+      <AdditionalMakepriExeParameters ParameterType="System.String" />
+      <ExcludeXamlFromLibraryLayoutsWhenXbfIsPresent ParameterType="System.String" />
+      <Expanded ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+      <IntermediateFileWrites ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+          Expanded = new Microsoft.Build.Framework.ITaskItem[0];
+          IntermediateFileWrites = new Microsoft.Build.Framework.ITaskItem[0];
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="RemoveExtraRIDs" BeforeTargets="ProcessFrameworkReferences;ResolveRuntimePackAssets">
+    <PropertyGroup>
+      <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    </PropertyGroup>
+  </Target>
+  <Target Name="GenerateBowPri" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build\Generate-Pri.ps1&quot; -OutputDirectory &quot;$(TargetDir).&quot; -IntermediateDirectory &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath).&quot;" />
+  </Target>
+
+</Project>

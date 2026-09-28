@@ -1,0 +1,15 @@
+.vs/
+.superpowers/
+docs/superpowers/
+Backup/
+xaml_backup/
+UpgradeLog.htm
+
+**/bin/
+**/obj/
+
+*.binlog
+*.log
+*.tmp
+*.user
+*.suo
