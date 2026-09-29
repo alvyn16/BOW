@@ -18,9 +18,19 @@ public static class DownloadHistoryStore
     {
         try
         {
-            return File.Exists(path)
+            var records = File.Exists(path)
                 ? JsonSerializer.Deserialize<List<DownloadRecord>>(File.ReadAllText(path)) ?? []
                 : [];
+            var sanitized = records.Select(record => record with
+            {
+                Uri = PersistedUrl.Sanitize(record.Uri)
+            }).ToArray();
+            if (!records.SequenceEqual(sanitized))
+            {
+                try { Save(path, sanitized); }
+                catch { /* still show sanitized records if migration cannot be written */ }
+            }
+            return sanitized;
         }
         catch { return []; }
     }
@@ -30,7 +40,8 @@ public static class DownloadHistoryStore
         var directory = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(directory);
         var temporaryPath = path + ".tmp";
-        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(records.Take(200).ToArray()));
+        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(records.Take(200)
+            .Select(record => record with { Uri = PersistedUrl.Sanitize(record.Uri) }).ToArray()));
         File.Move(temporaryPath, path, true);
     }
 }

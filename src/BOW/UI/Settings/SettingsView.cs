@@ -385,6 +385,40 @@ public sealed class SettingsView : UserControl
             "Fluid momentum physics for page navigation.",
             _store.Settings.SmoothScrolling,
             v => { _store.Settings.SmoothScrolling = v; Save(); }));
+        panel.Children.Add(MakeSectionLabel("HISTORY"));
+        var clearHistory = new Button { Content = "Clear browsing history", Margin = new Thickness(0, 8, 0, 0) };
+        var historyStatus = new TextBlock
+        {
+            FontFamily = ThemeBrushes.UiFont,
+            FontSize = 11,
+            Foreground = ThemeBrushes.MutedTextBrush,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        clearHistory.Click += async (_, _) =>
+        {
+            if (XamlRoot is null) return;
+            var confirmation = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Clear browsing history?",
+                Content = "Saved page visits will be removed from BOW.",
+                PrimaryButtonText = "Clear history",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
+            try
+            {
+                HistoryService.Instance.Clear();
+                historyStatus.Text = "Browsing history cleared.";
+            }
+            catch (Exception ex)
+            {
+                historyStatus.Text = $"Could not clear history: {ex.Message}";
+            }
+        };
+        panel.Children.Add(clearHistory);
+        panel.Children.Add(historyStatus);
         return panel;
     }
 
