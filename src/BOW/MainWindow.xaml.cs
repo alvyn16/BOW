@@ -286,6 +286,7 @@ public sealed class MainWindow : Window
     {
         var active = Store.ActiveTab;
         if (active is null) return;
+        TopBar.UpdateSiteIdentity();
 
         bool isNewTab = active.Url == "bow:newtab" || string.IsNullOrEmpty(active.Url);
         var partner = active.SplitPartnerId is Guid partnerId
@@ -327,8 +328,25 @@ public sealed class MainWindow : Window
         return host;
     }
 
+    public void RecoverTab(Guid id)
+    {
+        if (!_tabHosts.Remove(id, out var oldHost)) return;
+        _contentGrid.Children.Remove(oldHost);
+        oldHost.Dispose();
+        if (Store.Tabs.FirstOrDefault(tab => tab.Id == id) is { } tab)
+        {
+            tab.NavigationFailed = false;
+            tab.IsLoading = true;
+            GetOrCreateHost(tab);
+            RefreshContentArea();
+        }
+    }
+
     private void OnTabPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (sender == Store.ActiveTab && e.PropertyName is nameof(BowTab.HasLoadedSuccessfully)
+            or nameof(BowTab.NavigationFailed))
+            DispatcherQueue.TryEnqueue(TopBar.UpdateSiteIdentity);
         if (sender == Store.ActiveTab && e.PropertyName is nameof(BowTab.Url) or nameof(BowTab.IsSplitPartner) or nameof(BowTab.SplitPartnerId))
             DispatcherQueue.TryEnqueue(RefreshContentArea);
     }

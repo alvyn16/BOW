@@ -1,5 +1,6 @@
 using BOW.Core;
 using BOW.Services;
+using System.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -9,16 +10,20 @@ namespace BOW.UI.WebView;
 
 public sealed class WebViewHost : UserControl
 {
-    private static readonly SemaphoreSlim PermissionDialogGate = new(1, 1);
+    private static readonly SemaphoreSlim SecurityDialogGate = new(1, 1);
     private BowTab? _tab;
     private bool _webViewReady;
     private bool _initializing;
     private bool _downloadNavigationPending;
+    private bool _needsRecovery;
+    private bool _disposed;
+    private DateTimeOffset _ignoreUnresponsiveUntil;
     private System.Exception? _initializationException;
     private readonly TextBlock _errorTitle;
     private readonly TextBlock _errorDescription;
     private readonly HyperlinkButton _runtimeLink;
     private readonly Button _retryButton;
+    private readonly Button _waitButton;
 
     public Microsoft.UI.Xaml.Controls.WebView2 WebView { get; }
     public Grid WebViewErrorPanel { get; }
@@ -50,14 +55,35 @@ public sealed class WebViewHost : UserControl
         _retryButton.Click += (_, _) =>
         {
             if (_tab is null) return;
+            if (_needsRecovery)
+            {
+                App.MainWindow?.RecoverTab(_tab.Id);
+                return;
+            }
             WebViewErrorPanel.Visibility = Visibility.Collapsed;
             WebView.Visibility = Visibility.Visible;
             Navigate(_tab.Url);
+        };
+        _waitButton = new Button
+        {
+            Content = "Keep waiting",
+            FontFamily = ThemeBrushes.UiFont,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
+        _waitButton.Click += (_, _) =>
+        {
+            _needsRecovery = false;
+            _ignoreUnresponsiveUntil = DateTimeOffset.UtcNow.AddMinutes(1);
+            if (_tab is not null) _tab.NavigationFailed = false;
+            WebViewErrorPanel.Visibility = Visibility.Collapsed;
+            WebView.Visibility = Visibility.Visible;
         };
         errStack.Children.Add(_errorTitle);
         errStack.Children.Add(_errorDescription);
         errStack.Children.Add(_runtimeLink);
         errStack.Children.Add(_retryButton);
+        errStack.Children.Add(_waitButton);
         WebViewErrorPanel.Children.Add(errStack);
         root.Children.Add(WebViewErrorPanel);
 
@@ -142,6 +168,8 @@ public sealed class WebViewHost : UserControl
                 ?? new System.InvalidOperationException("WebView2 initialization completed without a browser instance.");
             _webViewReady = true;
             core.IsMuted = _tab?.IsMuted ?? false;
+            core.Settings.AreHostObjectsAllowed = false;
+            core.Settings.IsWebMessageEnabled = false;
 
             core.NavigationCompleted += OnNavigationCompleted;
             core.NavigationStarting += (_, _) => _downloadNavigationPending = false;
@@ -149,8 +177,12 @@ public sealed class WebViewHost : UserControl
             core.DocumentTitleChanged += OnDocumentTitleChanged;
             core.DownloadStarting += OnDownloadStarting;
             core.NewWindowRequested += OnNewWindowRequested;
+            core.LaunchingExternalUriScheme += OnLaunchingExternalUriScheme;
+            core.ServerCertificateErrorDetected += (_, args) =>
+                args.Action = CoreWebView2ServerCertificateErrorAction.Cancel;
             core.FaviconChanged += OnFaviconChanged;
             core.PermissionRequested += OnPermissionRequested;
+            core.ProcessFailed += OnProcessFailed;
 
             if (_tab is not null && !_tab.IsSleeping && !string.IsNullOrEmpty(_tab.Url))
             {
@@ -167,9 +199,12 @@ public sealed class WebViewHost : UserControl
             _errorTitle.Text = runtimeMissing ? "WebView2 runtime not found" : "WebView2 could not start";
             _errorDescription.Text = runtimeMissing
                 ? "BOW requires the WebView2 Evergreen runtime."
-                : $"The browser engine failed to initialize (0x{ex.HResult:X8}). Restart BOW and try again.";
+                : $"The browser engine failed to initialize (0x{ex.HResult:X8}). Try again after the browser process has stopped.";
             _runtimeLink.Visibility = runtimeMissing ? Visibility.Visible : Visibility.Collapsed;
-            _retryButton.Visibility = Visibility.Collapsed;
+            _needsRecovery = true;
+            _retryButton.Content = "Try again";
+            _retryButton.Visibility = Visibility.Visible;
+            _waitButton.Visibility = Visibility.Collapsed;
             WebViewErrorPanel.Visibility = Visibility.Visible;
             WebView.Visibility = Visibility.Collapsed;
         }
@@ -191,6 +226,7 @@ public sealed class WebViewHost : UserControl
 
     private async void OnNavigationCompleted(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs e)
     {
+        if (_disposed || _needsRecovery) return;
         var url = sender.Source;
         var succeeded = e.IsSuccess;
         var status = e.WebErrorStatus;
@@ -205,6 +241,7 @@ public sealed class WebViewHost : UserControl
         _downloadNavigationPending = false;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (_disposed || _needsRecovery) return;
             if (_tab != null && string.Equals(_tab.Url, url, StringComparison.OrdinalIgnoreCase)
                 && !becameDownload)
             {
@@ -217,6 +254,7 @@ public sealed class WebViewHost : UserControl
                 HistoryService.Instance.RecordVisit(url, sender.DocumentTitle, _tab.FaviconUrl);
             if (succeeded)
             {
+                _ignoreUnresponsiveUntil = DateTimeOffset.MinValue;
                 WebViewErrorPanel.Visibility = Visibility.Collapsed;
                 WebView.Visibility = Visibility.Visible;
             }
@@ -229,6 +267,9 @@ public sealed class WebViewHost : UserControl
 
     private void ShowNavigationError(string url, CoreWebView2WebErrorStatus status)
     {
+        _needsRecovery = false;
+        _retryButton.Content = "Try again";
+        _waitButton.Visibility = Visibility.Collapsed;
         _errorTitle.Text = status is CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect
             or CoreWebView2WebErrorStatus.CertificateExpired
             or CoreWebView2WebErrorStatus.CertificateRevoked
@@ -265,7 +306,12 @@ public sealed class WebViewHost : UserControl
             CoreWebView2PermissionKind.Notifications => "notifications",
             _ => null
         };
-        if (permission is null) return;
+        if (permission is null)
+        {
+            e.State = CoreWebView2PermissionState.Deny;
+            e.SavesInProfile = false;
+            return;
+        }
 
         var deferral = e.GetDeferral();
         var gateAcquired = false;
@@ -273,7 +319,7 @@ public sealed class WebViewHost : UserControl
         {
             e.State = CoreWebView2PermissionState.Deny;
             e.SavesInProfile = false;
-            await PermissionDialogGate.WaitAsync();
+            await SecurityDialogGate.WaitAsync();
             gateAcquired = true;
             if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var origin)
                 || origin.Scheme is not ("http" or "https")
@@ -310,9 +356,42 @@ public sealed class WebViewHost : UserControl
         }
         finally
         {
-            if (gateAcquired) PermissionDialogGate.Release();
+            if (gateAcquired) SecurityDialogGate.Release();
             deferral.Complete();
         }
+    }
+
+    private void OnProcessFailed(CoreWebView2 sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        if (_disposed || e.ProcessFailedKind is not
+            (CoreWebView2ProcessFailedKind.BrowserProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)) return;
+
+        var kind = e.ProcessFailedKind;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_disposed || _tab is null) return;
+            if (kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                && DateTimeOffset.UtcNow < _ignoreUnresponsiveUntil) return;
+
+            _needsRecovery = true;
+            _tab.IsLoading = false;
+            _tab.HasLoadedSuccessfully = false;
+            _tab.NavigationFailed = true;
+            _errorTitle.Text = kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                ? "This tab is not responding" : "This tab stopped working";
+            _errorDescription.Text = kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                ? "You can wait for the page or recover the tab. Recovering reloads the page and may lose unsaved input."
+                : "The browser process stopped. Recover this tab to reload its page. Your tabs remain in the session.";
+            _runtimeLink.Visibility = Visibility.Collapsed;
+            _retryButton.Content = "Recover tab";
+            _retryButton.Visibility = Visibility.Visible;
+            _waitButton.Visibility = kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                ? Visibility.Visible : Visibility.Collapsed;
+            WebViewErrorPanel.Visibility = Visibility.Visible;
+            WebView.Visibility = Visibility.Collapsed;
+        });
     }
 
     private async System.Threading.Tasks.Task RestoreScrollAsync()
@@ -350,7 +429,7 @@ public sealed class WebViewHost : UserControl
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_tab is null) return;
+            if (_disposed || _needsRecovery || _tab is null) return;
             _tab.IsLoading = true;
             _tab.HasLoadedSuccessfully = false;
             _tab.NavigationFailed = false;
@@ -386,6 +465,36 @@ public sealed class WebViewHost : UserControl
         var deferral = e.GetDeferral();
         try
         {
+            var fileName = Path.GetFileName(e.ResultFilePath);
+            if (BrowsingSafety.NeedsDownloadConfirmation(fileName))
+            {
+                if (App.MainWindow?.RootGrid.XamlRoot is not { } xamlRoot)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+                await SecurityDialogGate.WaitAsync();
+                try
+                {
+                    var source = Uri.TryCreate(e.DownloadOperation.Uri, UriKind.Absolute, out var uri)
+                        ? uri.Host : "an unknown site";
+                    var dialog = new ContentDialog
+                    {
+                        XamlRoot = xamlRoot,
+                        Title = "Download an application?",
+                        Content = $"{fileName} from {source} can run code on your computer. Only download it if you expected this file.",
+                        PrimaryButtonText = "Download",
+                        CloseButtonText = "Cancel",
+                        DefaultButton = ContentDialogButton.Close
+                    };
+                    if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                }
+                finally { SecurityDialogGate.Release(); }
+            }
             var folder = App.Store.Settings.DownloadFolder;
             if (App.Store.Settings.AskWhereToSaveDownloads)
             {
@@ -413,7 +522,46 @@ public sealed class WebViewHost : UserControl
     private void OnNewWindowRequested(CoreWebView2 sender, CoreWebView2NewWindowRequestedEventArgs e)
     {
         e.Handled = true;
-        DispatcherQueue.TryEnqueue(() => App.Store.AddTab(e.Uri));
+        if (BrowsingSafety.IsWebAddress(e.Uri))
+            DispatcherQueue.TryEnqueue(() => App.Store.AddTab(e.Uri));
+        else if (BrowsingSafety.CanOfferExternalLaunch(e.Uri, e.IsUserInitiated))
+            DispatcherQueue.TryEnqueue(() => _ = ConfirmExternalLaunchAsync(e.Uri, sender.Source));
+    }
+
+    private void OnLaunchingExternalUriScheme(CoreWebView2 sender,
+        CoreWebView2LaunchingExternalUriSchemeEventArgs e)
+    {
+        e.Cancel = true;
+        if (BrowsingSafety.CanOfferExternalLaunch(e.Uri, e.IsUserInitiated))
+            _ = ConfirmExternalLaunchAsync(e.Uri, e.InitiatingOrigin);
+    }
+
+    private async Task ConfirmExternalLaunchAsync(string address, string? source)
+    {
+        if (App.MainWindow?.RootGrid.XamlRoot is not { } xamlRoot) return;
+        await SecurityDialogGate.WaitAsync();
+        try
+        {
+            var from = Uri.TryCreate(source, UriKind.Absolute, out var origin)
+                && origin.Scheme is "http" or "https" ? origin.Host : "This page";
+            var target = new Uri(address);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = xamlRoot,
+                Title = "Open another app?",
+                Content = $"{from} wants to open a {target.Scheme} link in another app.\n\n{address}",
+                PrimaryButtonText = "Open app",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"External link launch failed: {ex}");
+        }
+        finally { SecurityDialogGate.Release(); }
     }
 
     public async System.Threading.Tasks.Task<bool> CanSleepAsync()
@@ -460,8 +608,11 @@ public sealed class WebViewHost : UserControl
 
     public void Dispose()
     {
+        _disposed = true;
         if (_tab is not null) _tab.PropertyChanged -= OnTabPropertyChanged;
-        WebView.Close();
+        _tab = null;
+        try { WebView.Close(); }
+        catch (Exception ex) { Debug.WriteLine($"Closing a failed tab: {ex}"); }
     }
 
     private void ShowSleepPanel()

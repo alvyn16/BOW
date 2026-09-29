@@ -23,6 +23,7 @@
     <Compile Include="..\BOW\Core\BowStore.cs" Link="Core\BowStore.cs" />
     <Compile Include="..\BOW\Core\SettingsModel.cs" Link="Core\SettingsModel.cs" />
     <Compile Include="..\BOW\Core\ShortcutCatalog.cs" Link="Core\ShortcutCatalog.cs" />
+    <Compile Include="..\BOW\Core\BrowsingSafety.cs" Link="Core\BrowsingSafety.cs" />
     <Compile Include="..\BOW\Services\SettingsService.cs" Link="Services\SettingsService.cs" />
     <Compile Include="..\BOW\Services\SessionManager.cs" Link="Services\SessionManager.cs" />
     <Compile Include="..\BOW\Services\SessionAutoSaver.cs" Link="Services\SessionAutoSaver.cs" />

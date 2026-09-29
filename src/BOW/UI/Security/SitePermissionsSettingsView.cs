@@ -50,9 +50,8 @@ public sealed class SitePermissionsSettingsView : UserControl
         {
             panel.Children.Add(new TextBlock
             {
-                Text = address.Scheme == "http" ? "Not secure · HTTP connection"
-                    : loadedSuccessfully ? "HTTPS connection established"
-                    : navigationFailed ? "HTTPS connection failed" : "HTTPS connection pending",
+                Text = BOW.Core.BrowsingSafety.ConnectionDescription(
+                    address.AbsoluteUri, loadedSuccessfully, navigationFailed),
                 FontFamily = ThemeBrushes.UiFont,
                 FontSize = 11,
                 Foreground = ThemeBrushes.MutedTextBrush,

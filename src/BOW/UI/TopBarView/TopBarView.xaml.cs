@@ -13,6 +13,9 @@ public sealed class TopBarView : UserControl
 {
     private BowStore? _store;
     private readonly Flyout _quickSettingsFlyout;
+    private readonly Flyout _siteInfoFlyout;
+    private readonly Button _siteInfoButton;
+    private readonly FontIcon _siteInfoIcon;
 
     public TabStripView TabStrip { get; }
     public StackPanel RightControls { get; }
@@ -45,6 +48,15 @@ public sealed class TopBarView : UserControl
         };
         RightControls = rightStack;
         Grid.SetColumn(rightStack, 1);
+
+        _siteInfoButton = CreateIconButton("\uE72E");
+        _siteInfoIcon = (FontIcon)_siteInfoButton.Content;
+        _siteInfoFlyout = new Flyout();
+        _siteInfoFlyout.Opening += (_, _) => _siteInfoFlyout.Content = BuildSiteInfo();
+        _siteInfoButton.Flyout = _siteInfoFlyout;
+        _siteInfoButton.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetName(_siteInfoButton, "Site information");
+        rightStack.Children.Add(_siteInfoButton);
 
         var searchBtn = CreateIconButton("\uE721");
         searchBtn.Click += (_, _) => App.MainWindow?.FocusOmnibar();
@@ -105,6 +117,7 @@ public sealed class TopBarView : UserControl
         _quickSettings.Initialize(store, this);
 
         UpdateThemeIcon(store.Settings.Theme);
+        UpdateSiteIdentity();
     }
 
     public void FocusOmnibar() => TabStrip.FocusOmnibar();
@@ -118,6 +131,66 @@ public sealed class TopBarView : UserControl
     public void SyncThemeIcon(string theme) => UpdateThemeIcon(theme);
 
     public void SyncZenMode(bool enabled) => _quickSettings.SyncZenMode(enabled);
+
+    public void UpdateSiteIdentity()
+    {
+        var tab = _store?.ActiveTab;
+        if (!BrowsingSafety.IsWebAddress(tab?.Url))
+        {
+            _siteInfoButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var uri = new Uri(tab!.Url);
+        _siteInfoButton.Visibility = Visibility.Visible;
+        _siteInfoIcon.Glyph = tab.NavigationFailed || uri.Scheme == "http"
+            ? "\uE7BA" : tab.HasLoadedSuccessfully ? "\uE72E" : "\uE774";
+        ToolTipService.SetToolTip(_siteInfoButton,
+            $"{uri.Host} · {BrowsingSafety.ConnectionDescription(tab.Url,
+                tab.HasLoadedSuccessfully, tab.NavigationFailed)}");
+    }
+
+    private UIElement BuildSiteInfo()
+    {
+        var tab = _store?.ActiveTab;
+        if (!Uri.TryCreate(tab?.Url, UriKind.Absolute, out var uri))
+            return new TextBlock { Text = "No site is open." };
+
+        var panel = new StackPanel { Width = 300, Spacing = 8 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = uri.Host,
+            FontFamily = ThemeBrushes.UiFont,
+            FontSize = 15,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = ThemeBrushes.TextBrush
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = uri.GetLeftPart(UriPartial.Authority),
+            FontFamily = ThemeBrushes.UiFont,
+            FontSize = 11,
+            Foreground = ThemeBrushes.MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = BrowsingSafety.ConnectionDescription(tab.Url,
+                tab.HasLoadedSuccessfully, tab.NavigationFailed),
+            FontFamily = ThemeBrushes.UiFont,
+            FontSize = 12,
+            Foreground = ThemeBrushes.TextBrush,
+            TextWrapping = TextWrapping.Wrap
+        });
+        var permissions = new Button { Content = "Site permissions", Margin = new Thickness(0, 8, 0, 0) };
+        permissions.Click += (_, _) =>
+        {
+            _siteInfoFlyout.Hide();
+            App.MainWindow?.ShowSettings("Site permissions");
+        };
+        panel.Children.Add(permissions);
+        return panel;
+    }
 
     private void ThemeButton_Click(object sender, RoutedEventArgs e)
     {
