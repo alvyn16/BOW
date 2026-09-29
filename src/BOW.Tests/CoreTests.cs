@@ -247,7 +247,7 @@ public class SettingsServiceTests
 public class SessionManagerTests
 {
     [Fact]
-    public void TabChangesAreSavedImmediatelyAndRestoredAfterUnexpectedExit()
+    public void TabChangesAreDebouncedAndFlushedOnClose()
     {
         var directory = Path.Combine(Path.GetTempPath(), "bow-session-test-" + Guid.NewGuid());
         var path = Path.Combine(directory, "session.json");
@@ -263,7 +263,8 @@ public class SessionManagerTests
                 first.GroupName = "Research";
                 first.IsMuted = true;
                 var second = store.AddTab("https://example.org/two");
-                Assert.Equal(2, SessionManager.LoadFrom(path).Count);
+                Assert.True(SpinWait.SpinUntil(() => SessionManager.LoadFrom(path).Count == 2,
+                    TimeSpan.FromSeconds(3)));
                 Assert.True(SessionManager.LoadFrom(path)[1].IsActive);
                 store.SetActiveTab(first.Id);
                 store.CloseTab(second.Id);

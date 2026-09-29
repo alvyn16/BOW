@@ -23,8 +23,9 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         Store = new BowStore();
-        _sessionAutoSaver = new SessionAutoSaver(Store);
         _mainWindow = new MainWindow();
+        _sessionAutoSaver = new SessionAutoSaver(Store,
+            dispatch: action => _mainWindow.DispatcherQueue.TryEnqueue(() => action()));
         MainWindow = _mainWindow;
         _mainWindow.Closed += OnMainWindowClosed;
         ApplyTheme(_mainWindow, Store.Settings.Theme);
@@ -34,7 +35,6 @@ public partial class App : Application
     private void OnMainWindowClosed(object sender, WindowEventArgs args)
     {
         _sessionAutoSaver?.Dispose();
-        SessionManager.Save(Store.Tabs, Store.ActiveTab?.Id);
         SettingsService.Save(Store.Settings);
     }
 
