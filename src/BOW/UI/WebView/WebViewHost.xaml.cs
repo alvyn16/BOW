@@ -582,15 +582,18 @@ public sealed class WebViewHost : UserControl
         catch { return false; }
     }
 
-    public async System.Threading.Tasks.Task SleepAsync()
+    public async System.Threading.Tasks.Task<bool> SleepAsync()
     {
-        if (_tab is null || !_webViewReady) return;
+        if (_tab is null || !_webViewReady || WebView.CoreWebView2 is not { } core) return false;
         try
         {
-            var scroll = await WebView.ExecuteScriptAsync("({x:window.scrollX,y:window.scrollY})");
-            _tab.SavedScrollPosition = scroll;
+            return await core.TrySuspendAsync();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Could not suspend tab: {ex}");
+            return false;
+        }
     }
 
     private async System.Threading.Tasks.Task WakeAsync()
@@ -600,7 +603,7 @@ public sealed class WebViewHost : UserControl
         WebView.Visibility = Visibility.Visible;
 
         if (!_webViewReady) return;
-        Navigate(_tab.Url);
+        if (WebView.CoreWebView2 is { IsSuspended: true } core) core.Resume();
 
         _tab.IsSleeping = false;
         await System.Threading.Tasks.Task.CompletedTask;

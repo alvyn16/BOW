@@ -371,13 +371,9 @@ public sealed class MainWindow : Window
     private async Task<bool> SleepTabAsync(BowTab tab)
     {
         if (!_tabHosts.TryGetValue(tab.Id, out var host)) return true;
+        if (host.Visibility == Visibility.Visible) return false;
         if (!await host.CanSleepAsync()) return false;
-        await host.SleepAsync();
-        if (tab == Store.ActiveTab) return false;
-        _contentGrid.Children.Remove(host);
-        _tabHosts.Remove(tab.Id);
-        host.Dispose();
-        return true;
+        return tab != Store.ActiveTab && await host.SleepAsync();
     }
 
     public void UpdateZenMode(bool zenMode)
