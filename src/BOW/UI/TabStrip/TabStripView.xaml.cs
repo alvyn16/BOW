@@ -1,6 +1,7 @@
 using BOW.Core;
 using BOW.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -24,6 +25,9 @@ public sealed class TabStripView : UserControl
     private readonly Button _addButton;
     private readonly Button _moreButton;
     private readonly Image _appIconImage;
+    private readonly Button _backButton;
+    private readonly Button _forwardButton;
+    private readonly Button _reloadButton;
     private readonly Dictionary<Guid, BowTab> _observedTabs = new();
 
     public StackPanel TabsRepeater { get; }
@@ -56,6 +60,19 @@ public sealed class TabStripView : UserControl
         ToolTipService.SetToolTip(sidebarToggleBtn, "Toggle sidebar");
         sidebarToggleBtn.Click += SidebarToggle_Click;
         root.Children.Add(sidebarToggleBtn);
+
+        _backButton = CreateNavigationButton("\uE72B", "Back");
+        _backButton.Click += (_, _) => App.MainWindow?.GoBack();
+        root.Children.Add(_backButton);
+
+        _forwardButton = CreateNavigationButton("\uE72A", "Forward");
+        _forwardButton.Click += (_, _) => App.MainWindow?.GoForward();
+        root.Children.Add(_forwardButton);
+
+        _reloadButton = CreateNavigationButton("\uE72C", "Reload");
+        _reloadButton.Margin = new Thickness(0, 0, 8, 0);
+        _reloadButton.Click += (_, _) => App.MainWindow?.ReloadFocusedTab();
+        root.Children.Add(_reloadButton);
 
         _scrollView = new ScrollViewer
         {
@@ -97,6 +114,31 @@ public sealed class TabStripView : UserControl
         root.Children.Add(_moreButton);
 
         this.Content = root;
+    }
+
+    private static Button CreateNavigationButton(string glyph, string label)
+    {
+        var button = new Button
+        {
+            Content = new FontIcon
+            {
+                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = glyph, FontSize = 13
+            },
+            Width = 28, Height = 28, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6),
+            Foreground = ThemeBrushes.TextBrush, IsEnabled = false
+        };
+        ToolTipService.SetToolTip(button, label);
+        AutomationProperties.SetName(button, label);
+        return button;
+    }
+
+    public void SetNavigationState(bool canGoBack, bool canGoForward, bool canReload)
+    {
+        _backButton.IsEnabled = canGoBack;
+        _forwardButton.IsEnabled = canGoForward;
+        _reloadButton.IsEnabled = canReload;
     }
 
     private void RefreshTabs()

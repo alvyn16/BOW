@@ -29,6 +29,7 @@ public sealed class WebViewHost : UserControl
     public Grid WebViewErrorPanel { get; }
     public Grid SleepPanel { get; }
     public event Action<WebViewHost, bool>? FullScreenChanged;
+    public event Action<WebViewHost>? NavigationStateChanged;
 
     public WebViewHost()
     {
@@ -175,6 +176,10 @@ public sealed class WebViewHost : UserControl
             core.Settings.IsWebMessageEnabled = false;
 
             core.NavigationCompleted += OnNavigationCompleted;
+            core.HistoryChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_disposed) NavigationStateChanged?.Invoke(this);
+            });
             core.NavigationStarting += (_, _) => _downloadNavigationPending = false;
             core.SourceChanged += OnSourceChanged;
             core.DocumentTitleChanged += OnDocumentTitleChanged;
@@ -193,6 +198,7 @@ public sealed class WebViewHost : UserControl
                     if (!_disposed) FullScreenChanged?.Invoke(this, core.ContainsFullScreenElement);
                 });
             };
+            NavigationStateChanged?.Invoke(this);
 
             if (_tab is not null && !_tab.IsSleeping && !string.IsNullOrEmpty(_tab.Url))
             {
@@ -272,6 +278,7 @@ public sealed class WebViewHost : UserControl
                 ShowNavigationError(url, status);
             _ = ApplyZoomAsync();
             _ = RestoreScrollAsync();
+            NavigationStateChanged?.Invoke(this);
         });
     }
 

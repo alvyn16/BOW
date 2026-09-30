@@ -358,17 +358,19 @@ public sealed class MainWindow : Window
         }
 
         UpdateZenMode(Store.Settings.ZenMode);
+        UpdateNavigationButtons();
     }
 
     private WebViewHost GetOrCreateHost(BowTab tab)
     {
         if (_tabHosts.TryGetValue(tab.Id, out var host)) return host;
         host = new WebViewHost { Visibility = Visibility.Collapsed };
-        host.WebView.GotFocus += (_, _) => _focusedContentTabId = tab.Id;
+        host.WebView.GotFocus += (_, _) => FocusContentTab(tab.Id);
         host.WebView.AddHandler(UIElement.PointerPressedEvent,
-            new PointerEventHandler((_, _) => _focusedContentTabId = tab.Id), true);
-        host.SleepPanel.PointerPressed += (_, _) => _focusedContentTabId = tab.Id;
+            new PointerEventHandler((_, _) => FocusContentTab(tab.Id)), true);
+        host.SleepPanel.PointerPressed += (_, _) => FocusContentTab(tab.Id);
         host.FullScreenChanged += OnWebContentFullScreenChanged;
+        host.NavigationStateChanged += _ => UpdateNavigationButtons();
         host.SetTab(tab);
         _tabHosts.Add(tab.Id, host);
         _contentGrid.Children.Insert(0, host);
@@ -675,6 +677,7 @@ public sealed class MainWindow : Window
         }
         else if (section is null) _settingsView.RefreshCurrentSection();
         MainSplitView.Visibility = Visibility.Collapsed;
+        UpdateNavigationButtons();
         _settingsView.Visibility = Visibility.Visible;
         if (section is not null) _settingsView.SelectSection(section);
         TabSwitcherView.Visibility = Visibility.Collapsed;
@@ -685,6 +688,7 @@ public sealed class MainWindow : Window
     {
         if (_settingsView is not null) _settingsView.Visibility = Visibility.Collapsed;
         MainSplitView.Visibility = Visibility.Visible;
+        UpdateNavigationButtons();
     }
 
     public void RefreshVisibleSettings()
@@ -787,8 +791,8 @@ public sealed class MainWindow : Window
     private Action? GetShortcutAction(string id) => id switch
     {
         "address" => () => TopBar.FocusOmnibar(),
-        "back" => () => NavigateHistory(true),
-        "forward" => () => NavigateHistory(false),
+        "back" => GoBack,
+        "forward" => GoForward,
         "new-tab" => () => Store.AddTab("bow:newtab"),
         "close-tab" => CloseFocusedTab,
         "leave-split" => () => { if (Store.ActiveTab is { IsSplitPartner: true } tab) Store.JoinSplitTab(tab.Id); },
@@ -832,11 +836,37 @@ public sealed class MainWindow : Window
         return Store.Tabs.FirstOrDefault(tab => tab.Id == _focusedContentTabId) ?? active;
     }
 
-    private void NavigateHistory(bool back)
+    private void FocusContentTab(Guid id)
+    {
+        _focusedContentTabId = id;
+        UpdateNavigationButtons();
+    }
+
+    private WebViewHost? GetNavigationHost()
     {
         if (MainSplitView.Visibility != Visibility.Visible || GetFocusedContentTab() is not { } tab
-            || !_tabHosts.TryGetValue(tab.Id, out var host)) return;
-        var core = host.WebView.CoreWebView2;
+            || string.IsNullOrEmpty(tab.Url) || tab.Url == "bow:newtab"
+            || !_tabHosts.TryGetValue(tab.Id, out var host) || host.Visibility != Visibility.Visible)
+            return null;
+        return host;
+    }
+
+    private void UpdateNavigationButtons()
+    {
+        var core = GetNavigationHost()?.WebView.CoreWebView2;
+        TopBar.TabStrip.SetNavigationState(core?.CanGoBack == true,
+            core?.CanGoForward == true, core is not null);
+    }
+
+    public void GoBack() => NavigateHistory(true);
+
+    public void GoForward() => NavigateHistory(false);
+
+    public void ReloadFocusedTab() => GetNavigationHost()?.WebView.CoreWebView2?.Reload();
+
+    private void NavigateHistory(bool back)
+    {
+        var core = GetNavigationHost()?.WebView.CoreWebView2;
         if (back && core?.CanGoBack == true) core.GoBack();
         else if (!back && core?.CanGoForward == true) core.GoForward();
     }
