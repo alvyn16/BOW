@@ -19,10 +19,14 @@ BOW stores tabs, history, and download records as JSON in `%LOCALAPPDATA%\BOW`.
 Before saving URLs, it removes user-info credentials and common authentication
 parameters such as `code`, `access_token`, and `session_id`. Existing JSON files
 are sanitized when loaded. This is a best-effort filter; websites can use other
-parameter names or put secrets in URL paths. Settings > Browsing > Clear browsing
-history removes BOW's saved page visits. It does not clear website cookies, the
-current tab session, downloaded files, or download records.
+parameter names or put secrets in URL paths. Settings > Privacy & browsing can
+clear selected browsing history, site data, cache, and download records for a
+chosen time range from both WebView2 and BOW's local history. It does not delete
+downloaded files, saved passwords, autofill, or the current tab session.
 
-Idle background tabs use WebView2 suspension and resume without reloading. Tab
-changes are saved after a brief pause, and the current session is saved again
-when the window closes.
+Tracking protection can be set to Off, Basic, Balanced (default), or Strict.
+Idle background tabs can unload to free memory after the configured interval
+and reload when reopened; if unloading is unavailable, WebView2 is suspended.
+Tabs playing media stay awake; individual sites can be
+excluded from automatic sleep in Settings or the tab menu. Tab changes are
+saved after a brief pause, and the current session is saved again on close.

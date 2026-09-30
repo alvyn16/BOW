@@ -168,6 +168,8 @@ public sealed class WebViewHost : UserControl
             var core = WebView.CoreWebView2 ?? throw _initializationException
                 ?? new System.InvalidOperationException("WebView2 initialization completed without a browser instance.");
             _webViewReady = true;
+            try { TrackingProtectionService.Apply(core, App.Store.Settings.TrackingProtectionLevel); }
+            catch (Exception ex) { Debug.WriteLine($"Could not apply tracking protection: {ex}"); }
             core.IsMuted = _tab?.IsMuted ?? false;
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.IsWebMessageEnabled = false;

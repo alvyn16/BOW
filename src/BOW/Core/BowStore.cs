@@ -5,7 +5,7 @@ using System.Collections.ObjectModel;
 namespace BOW.Core;
 
 public sealed record ClosedTabEntry(Guid Id, string Url, string Title,
-    bool IsPinned, string? GroupName, bool IsMuted);
+    bool IsPinned, string? GroupName, bool IsMuted, DateTimeOffset ClosedAt);
 
 /// <summary>
 /// Central application state. Single source of truth for all tabs and settings.
@@ -70,7 +70,7 @@ public partial class BowStore : ObservableObject
         // Save to closed stack (omit newtab pages)
         if (!string.IsNullOrEmpty(tab.Url) && tab.Url != "bow:newtab")
             _closedTabsStack.Push(new ClosedTabEntry(Guid.NewGuid(), tab.Url, tab.Title,
-                tab.IsPinned, tab.GroupName, tab.IsMuted));
+                tab.IsPinned, tab.GroupName, tab.IsMuted, DateTimeOffset.UtcNow));
 
         var index = Tabs.IndexOf(tab);
         if (tab.SplitPartnerId is Guid partnerId)
@@ -113,6 +113,14 @@ public partial class BowStore : ObservableObject
     {
         if (_closedTabsStack.Count == 0) return;
         ReopenClosedTab(_closedTabsStack.Peek().Id);
+    }
+
+    public void ClearRecentlyClosedSince(DateTimeOffset? since)
+    {
+        var remaining = _closedTabsStack.Where(entry =>
+            since is not null && entry.ClosedAt < since.Value).Reverse().ToArray();
+        _closedTabsStack.Clear();
+        foreach (var entry in remaining) _closedTabsStack.Push(entry);
     }
 
     public void ReopenClosedTab(Guid id)

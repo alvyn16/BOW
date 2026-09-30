@@ -267,8 +267,15 @@ public sealed class SidebarView : UserControl
             {
                 title.Text = tab.Title;
                 muteIcon.Visibility = tab.IsMuted ? Visibility.Visible : Visibility.Collapsed;
-                ToolTipService.SetToolTip(row, tab.Title);
-                if (Uri.TryCreate(tab.FaviconUrl, UriKind.Absolute, out var uri))
+                ToolTipService.SetToolTip(row, tab.IsSleeping ? $"{tab.Title} · Sleeping" : tab.Title);
+                if (tab.IsSleeping)
+                {
+                    icon.Source = null;
+                    icon.Visibility = Visibility.Collapsed;
+                    fallback.Glyph = "\uE708";
+                    fallback.Visibility = Visibility.Visible;
+                }
+                else if (Uri.TryCreate(tab.FaviconUrl, UriKind.Absolute, out var uri))
                 {
                     icon.Source = new BitmapImage(uri);
                     icon.Visibility = Visibility.Visible;
@@ -278,6 +285,7 @@ public sealed class SidebarView : UserControl
                 {
                     icon.Source = null;
                     icon.Visibility = Visibility.Collapsed;
+                    fallback.Glyph = "\uE774";
                     fallback.Visibility = Visibility.Visible;
                 }
             }
@@ -286,7 +294,7 @@ public sealed class SidebarView : UserControl
                 if (e.PropertyName == nameof(BowTab.GroupName))
                     DispatcherQueue.TryEnqueue(Refresh);
                 else if (e.PropertyName is nameof(BowTab.Title) or nameof(BowTab.FaviconUrl)
-                    or nameof(BowTab.IsMuted))
+                    or nameof(BowTab.IsMuted) or nameof(BowTab.IsSleeping))
                     DispatcherQueue.TryEnqueue(UpdateTab);
             };
             tab.PropertyChanged += handler;

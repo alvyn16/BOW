@@ -107,4 +107,20 @@ public sealed class HistoryService
         if (File.Exists(_path)) File.Delete(_path);
         _entries.Clear();
     }
+
+    public void ClearSince(DateTimeOffset? since)
+    {
+        if (since is null)
+        {
+            Clear();
+            return;
+        }
+        var remaining = _entries.Where(entry => entry.VisitedAt < since.Value).ToList();
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        var temp = _path + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(remaining));
+        File.Move(temp, _path, true);
+        _entries.Clear();
+        _entries.AddRange(remaining);
+    }
 }

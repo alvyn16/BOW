@@ -116,6 +116,19 @@ public class BowStoreTests
         Assert.True(store.ActiveTab.IsMuted);
         Assert.Single(store.RecentlyClosedTabs);
     }
+
+    [Fact]
+    public void ClearingHistoryAlsoClearsRecentlyClosedTabs()
+    {
+        var store = CreateStore();
+        var tab = store.AddTab("https://example.com/one");
+        store.CloseTab(tab.Id);
+        Assert.Single(store.RecentlyClosedTabs);
+
+        store.ClearRecentlyClosedSince(DateTimeOffset.UtcNow.AddHours(-1));
+
+        Assert.Empty(store.RecentlyClosedTabs);
+    }
 }
 
 /// <summary>

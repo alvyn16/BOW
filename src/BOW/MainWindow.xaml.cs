@@ -16,6 +16,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using BOW.Services;
 using BOW.UI.Security;
+using Microsoft.Web.WebView2.Core;
 
 namespace BOW;
 
@@ -435,6 +436,53 @@ public sealed class MainWindow : Window
         }
 
         return tab != Store.ActiveTab && await host.SleepAsync();
+    }
+
+    public async Task SleepTabNowAsync(BowTab tab)
+    {
+        if (tab == Store.ActiveTab || tab.IsSleeping || !Store.Tabs.Contains(tab)) return;
+        if (await SleepTabAsync(tab) && tab != Store.ActiveTab && Store.Tabs.Contains(tab))
+            tab.IsSleeping = true;
+    }
+
+    public void ApplyTrackingProtection()
+    {
+        foreach (var host in _tabHosts.Values)
+            if (host.WebView.CoreWebView2 is { } core)
+                TrackingProtectionService.Apply(core, Store.Settings.TrackingProtectionLevel);
+    }
+
+    public async Task ClearWebViewDataAsync(CoreWebView2BrowsingDataKinds kinds, DateTime? since)
+    {
+        var core = _tabHosts.Values.Select(host => host.WebView.CoreWebView2)
+            .FirstOrDefault(value => value is not null);
+        Microsoft.UI.Xaml.Controls.WebView2? temporary = null;
+        try
+        {
+            if (core is null)
+            {
+                temporary = new Microsoft.UI.Xaml.Controls.WebView2
+                {
+                    Width = 1, Height = 1, Opacity = 0, IsHitTestVisible = false
+                };
+                RootGrid.Children.Add(temporary);
+                await temporary.EnsureCoreWebView2Async();
+                core = temporary.CoreWebView2;
+            }
+            if (core is null) throw new InvalidOperationException("Browser profile is unavailable.");
+            if (since is { } start)
+                await core.Profile.ClearBrowsingDataAsync(kinds, start, DateTime.UtcNow);
+            else
+                await core.Profile.ClearBrowsingDataAsync(kinds);
+        }
+        finally
+        {
+            if (temporary is not null)
+            {
+                RootGrid.Children.Remove(temporary);
+                temporary.Close();
+            }
+        }
     }
 
     public void UpdateZenMode(bool zenMode)

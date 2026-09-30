@@ -6,13 +6,14 @@ namespace BOW.Services;
 
 /// <summary>
 /// Monitors idle tabs and puts them to sleep after the configured interval.
-/// Sleep is triggered by setting BowTab.IsSleeping = true, which WebViewHost observes.
+/// The callback unloads or suspends the inactive WebView before the tab is marked sleeping.
 /// </summary>
 public sealed class TabSleepService
 {
     private readonly BowStore _store;
     private readonly Func<BowTab, Task<bool>> _sleepTab;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMinutes(1) };
+    private bool _running;
 
     public TabSleepService(BowStore store, Func<BowTab, Task<bool>> sleepTab)
     {
@@ -26,26 +27,32 @@ public sealed class TabSleepService
 
     private async void OnTick(object? sender, object e)
     {
-        var thresholdMinutes = _store.Settings.TabSleepMinutes;
-        if (thresholdMinutes <= 0) return;
-
-        var now = DateTimeOffset.UtcNow;
-        foreach (var tab in _store.Tabs.ToList())
+        if (_running) return;
+        _running = true;
+        try
         {
-            // Never sleep the active tab
-            if (tab.Id == _store.ActiveTab?.Id) continue;
-            if (tab.IsSleeping) continue;
-            if ((now - tab.LastActiveAt).TotalMinutes < thresholdMinutes) continue;
+            var thresholdMinutes = _store.Settings.TabSleepMinutes;
+            if (thresholdMinutes <= 0) return;
 
-            try
+            var now = DateTimeOffset.UtcNow;
+            foreach (var tab in _store.Tabs.ToList())
             {
-                if (await _sleepTab(tab) && tab != _store.ActiveTab)
-                    tab.IsSleeping = true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Could not sleep tab: {ex}");
+                if (tab.Id == _store.ActiveTab?.Id || tab.IsSleeping) continue;
+                if (TabSleepPolicy.IsExcluded(tab.Url, _store.Settings.TabSleepExcludedHosts)) continue;
+                if ((now - tab.LastActiveAt).TotalMinutes < thresholdMinutes) continue;
+
+                try
+                {
+                    if (await _sleepTab(tab) && tab != _store.ActiveTab)
+                        tab.IsSleeping = true;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Could not sleep tab: {ex}");
+                }
             }
         }
+        finally { _running = false; }
     }
+
 }
