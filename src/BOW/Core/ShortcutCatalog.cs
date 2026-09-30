@@ -13,6 +13,8 @@ public static class ShortcutCatalog
     public static IReadOnlyList<ShortcutDefinition> Commands { get; } =
     [
         new("address", "Search or enter address", "Ctrl+L"),
+        new("back", "Go back", "Ctrl+A"),
+        new("forward", "Go forward", "Ctrl+D"),
         new("new-tab", "New tab", "Ctrl+T"),
         new("close-tab", "Close tab", "Ctrl+W"),
         new("leave-split", "Leave split view", "Ctrl+Shift+2"),

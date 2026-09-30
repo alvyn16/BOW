@@ -787,6 +787,8 @@ public sealed class MainWindow : Window
     private Action? GetShortcutAction(string id) => id switch
     {
         "address" => () => TopBar.FocusOmnibar(),
+        "back" => () => NavigateHistory(true),
+        "forward" => () => NavigateHistory(false),
         "new-tab" => () => Store.AddTab("bow:newtab"),
         "close-tab" => CloseFocusedTab,
         "leave-split" => () => { if (Store.ActiveTab is { IsSplitPartner: true } tab) Store.JoinSplitTab(tab.Id); },
@@ -819,11 +821,24 @@ public sealed class MainWindow : Window
 
     private void CloseFocusedTab()
     {
-        if (Store.ActiveTab is not { } active) return;
-        var id = active.IsSplitPartner && _focusedContentTabId is Guid focusedId
-            && (focusedId == active.Id || focusedId == active.SplitPartnerId)
-            ? focusedId : active.Id;
-        Store.CloseTab(id);
+        if (GetFocusedContentTab() is { } tab) Store.CloseTab(tab.Id);
+    }
+
+    private BowTab? GetFocusedContentTab()
+    {
+        var active = Store.ActiveTab;
+        if (active?.IsSplitPartner != true || active.SplitPartnerId != _focusedContentTabId)
+            return active;
+        return Store.Tabs.FirstOrDefault(tab => tab.Id == _focusedContentTabId) ?? active;
+    }
+
+    private void NavigateHistory(bool back)
+    {
+        if (MainSplitView.Visibility != Visibility.Visible || GetFocusedContentTab() is not { } tab
+            || !_tabHosts.TryGetValue(tab.Id, out var host)) return;
+        var core = host.WebView.CoreWebView2;
+        if (back && core?.CanGoBack == true) core.GoBack();
+        else if (!back && core?.CanGoForward == true) core.GoForward();
     }
 
     private void ToggleMaximizeWindow()

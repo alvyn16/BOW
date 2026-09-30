@@ -9,14 +9,29 @@ public class ShortcutTests
     {
         var settings = new SettingsModel();
         Assert.True(ShortcutCatalog.TrySetBinding(settings, "address", "Ctrl+K", out _));
-        Assert.Equal("Ctrl+K", ShortcutCatalog.GetBinding(settings, ShortcutCatalog.Commands[0]));
+        Assert.Equal("Ctrl+K", ShortcutCatalog.GetBinding(settings,
+            ShortcutCatalog.Commands.Single(command => command.Id == "address")));
         Assert.False(ShortcutCatalog.TrySetBinding(settings, "new-tab", "Ctrl+K", out var error));
         Assert.Contains("Search or enter address", error);
-        Assert.Equal("Ctrl+T", ShortcutCatalog.GetBinding(settings, ShortcutCatalog.Commands[1]));
+        Assert.Equal("Ctrl+T", ShortcutCatalog.GetBinding(settings,
+            ShortcutCatalog.Commands.Single(command => command.Id == "new-tab")));
 
         var restored = System.Text.Json.JsonSerializer.Deserialize<SettingsModel>(
             System.Text.Json.JsonSerializer.Serialize(settings))!;
-        Assert.Equal("Ctrl+K", ShortcutCatalog.GetBinding(restored, ShortcutCatalog.Commands[0]));
+        Assert.Equal("Ctrl+K", ShortcutCatalog.GetBinding(restored,
+            ShortcutCatalog.Commands.Single(command => command.Id == "address")));
+    }
+
+    [Fact]
+    public void HistoryShortcuts_DefaultToCtrlAAndCtrlD()
+    {
+        var settings = new SettingsModel();
+        var back = ShortcutCatalog.Commands.Single(command => command.Id == "back");
+        var forward = ShortcutCatalog.Commands.Single(command => command.Id == "forward");
+
+        Assert.Equal("Ctrl+A", ShortcutCatalog.GetBinding(settings, back));
+        Assert.Equal("Ctrl+D", ShortcutCatalog.GetBinding(settings, forward));
+        Assert.False(ShortcutCatalog.TrySetBinding(settings, forward.Id, "Ctrl+A", out _));
     }
 
     [Fact]
