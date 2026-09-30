@@ -790,6 +790,7 @@ public sealed class MainWindow : Window
         "new-tab" => () => Store.AddTab("bow:newtab"),
         "close-tab" => CloseFocusedTab,
         "leave-split" => () => { if (Store.ActiveTab is { IsSplitPartner: true } tab) Store.JoinSplitTab(tab.Id); },
+        "full-screen" => ToggleFullScreen,
         "reopen-tab" => () => Store.ReopenLastClosedTab(),
         "tab-switcher" => () => TabSwitcherView.Visibility = Visibility.Visible,
         "next-tab" => () => CycleTab(+1),
@@ -823,6 +824,14 @@ public sealed class MainWindow : Window
             && (focusedId == active.Id || focusedId == active.SplitPartnerId)
             ? focusedId : active.Id;
         Store.CloseTab(id);
+    }
+
+    private void ToggleFullScreen()
+    {
+        if (_webContentFullScreenHost is { } host)
+            _ = host.ExitFullScreenAsync();
+        else
+            SetZenMode(!_isZenMode);
     }
 
     private void AddKeyAccel(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers mod, System.Action action)

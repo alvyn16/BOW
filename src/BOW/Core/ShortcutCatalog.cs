@@ -16,6 +16,7 @@ public static class ShortcutCatalog
         new("new-tab", "New tab", "Ctrl+T"),
         new("close-tab", "Close tab", "Ctrl+W"),
         new("leave-split", "Leave split view", "Ctrl+Shift+2"),
+        new("full-screen", "Toggle full screen", "F11"),
         new("reopen-tab", "Reopen closed tab", "Ctrl+Shift+T"),
         new("tab-switcher", "Show tab switcher", "Ctrl+Shift+A"),
         new("next-tab", "Next tab", "Ctrl+Tab"),
