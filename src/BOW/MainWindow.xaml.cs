@@ -790,7 +790,7 @@ public sealed class MainWindow : Window
         "new-tab" => () => Store.AddTab("bow:newtab"),
         "close-tab" => CloseFocusedTab,
         "leave-split" => () => { if (Store.ActiveTab is { IsSplitPartner: true } tab) Store.JoinSplitTab(tab.Id); },
-        "full-screen" => ToggleFullScreen,
+        "full-screen" => ToggleMaximizeWindow,
         "reopen-tab" => () => Store.ReopenLastClosedTab(),
         "tab-switcher" => () => TabSwitcherView.Visibility = Visibility.Visible,
         "next-tab" => () => CycleTab(+1),
@@ -826,12 +826,25 @@ public sealed class MainWindow : Window
         Store.CloseTab(id);
     }
 
-    private void ToggleFullScreen()
+    private void ToggleMaximizeWindow()
     {
         if (_webContentFullScreenHost is { } host)
+        {
             _ = host.ExitFullScreenAsync();
+            return;
+        }
+        if (_isZenMode)
+        {
+            SetZenMode(false);
+            if (_appWindow?.Presenter is OverlappedPresenter restoredPresenter)
+                restoredPresenter.Maximize();
+            return;
+        }
+        if (_appWindow?.Presenter is not OverlappedPresenter presenter) return;
+        if (presenter.State == OverlappedPresenterState.Maximized)
+            presenter.Restore();
         else
-            SetZenMode(!_isZenMode);
+            presenter.Maximize();
     }
 
     private void AddKeyAccel(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers mod, System.Action action)
