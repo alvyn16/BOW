@@ -58,6 +58,23 @@ public class BowStoreTests
     }
 
     [Fact]
+    public void ClosingActiveSplitTab_ActivatesRemainingPartner()
+    {
+        var store = CreateStore();
+        var partner = store.AddTab("https://example.com/partner");
+        store.AddTab("https://example.com/unrelated");
+        var active = store.AddTab("https://example.com/active");
+        Assert.True(store.SplitWithTab(partner.Id, placeOnLeft: false));
+
+        store.CloseTab(active.Id);
+
+        Assert.DoesNotContain(active, store.Tabs);
+        Assert.Same(partner, store.ActiveTab);
+        Assert.False(partner.IsSplitPartner);
+        Assert.Null(partner.SplitPartnerId);
+    }
+
+    [Fact]
     public void JoinSplitTab_KeepsBothTabsOpen()
     {
         var store = CreateStore();

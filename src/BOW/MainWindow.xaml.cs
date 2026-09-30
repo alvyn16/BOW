@@ -49,6 +49,7 @@ public sealed class MainWindow : Window
     private readonly Border _leftTabDropTarget;
     private readonly Border _rightTabDropTarget;
     private Guid? _draggedTabId;
+    private Guid? _focusedContentTabId;
     private readonly Dictionary<Guid, WebViewHost> _tabHosts = new();
     private readonly List<KeyboardAccelerator> _shortcutAccelerators = new();
     private readonly TabSleepService _sleepService;
@@ -289,6 +290,7 @@ public sealed class MainWindow : Window
             if (e.PropertyName == nameof(Store.ActiveTab))
                 DispatcherQueue.TryEnqueue(() =>
                 {
+                    _focusedContentTabId = Store.ActiveTab?.Id;
                     HideAddressOverlay();
                     NewTabPageView.HideRecentPages();
                     ShowBrowser();
@@ -314,6 +316,8 @@ public sealed class MainWindow : Window
         bool isNewTab = active.Url == "bow:newtab" || string.IsNullOrEmpty(active.Url);
         var partner = active.SplitPartnerId is Guid partnerId
             ? Store.Tabs.FirstOrDefault(t => t.Id == partnerId) : null;
+        if (_focusedContentTabId != active.Id && _focusedContentTabId != partner?.Id)
+            _focusedContentTabId = active.Id;
         var fullScreenHost = _webContentFullScreenHost;
         if (fullScreenHost is not null
             && (!_tabHosts.TryGetValue(active.Id, out var activeHost) || activeHost != fullScreenHost)
@@ -360,6 +364,10 @@ public sealed class MainWindow : Window
     {
         if (_tabHosts.TryGetValue(tab.Id, out var host)) return host;
         host = new WebViewHost { Visibility = Visibility.Collapsed };
+        host.WebView.GotFocus += (_, _) => _focusedContentTabId = tab.Id;
+        host.WebView.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler((_, _) => _focusedContentTabId = tab.Id), true);
+        host.SleepPanel.PointerPressed += (_, _) => _focusedContentTabId = tab.Id;
         host.FullScreenChanged += OnWebContentFullScreenChanged;
         host.SetTab(tab);
         _tabHosts.Add(tab.Id, host);
@@ -780,7 +788,8 @@ public sealed class MainWindow : Window
     {
         "address" => () => TopBar.FocusOmnibar(),
         "new-tab" => () => Store.AddTab("bow:newtab"),
-        "close-tab" => () => { if (Store.ActiveTab is { } tab) Store.CloseTab(tab.Id); },
+        "close-tab" => CloseFocusedTab,
+        "leave-split" => () => { if (Store.ActiveTab is { IsSplitPartner: true } tab) Store.JoinSplitTab(tab.Id); },
         "reopen-tab" => () => Store.ReopenLastClosedTab(),
         "tab-switcher" => () => TabSwitcherView.Visibility = Visibility.Visible,
         "next-tab" => () => CycleTab(+1),
@@ -805,6 +814,15 @@ public sealed class MainWindow : Window
             TabSwitcherView.Visibility = Visibility.Collapsed;
         else if (_settingsView?.Visibility == Visibility.Visible)
             ShowBrowser();
+    }
+
+    private void CloseFocusedTab()
+    {
+        if (Store.ActiveTab is not { } active) return;
+        var id = active.IsSplitPartner && _focusedContentTabId is Guid focusedId
+            && (focusedId == active.Id || focusedId == active.SplitPartnerId)
+            ? focusedId : active.Id;
+        Store.CloseTab(id);
     }
 
     private void AddKeyAccel(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers mod, System.Action action)

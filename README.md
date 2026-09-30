@@ -35,3 +35,5 @@ Drag a tab onto another tab to reorder it. Drag an inactive tab onto the active
 tab, or into the page area, to preview split view and open it beside the current
 page. The page-area targets allow left or right placement. Closing split view
 keeps both tabs open.
+Use Ctrl+Shift+2 to leave split view while keeping both tabs. Ctrl+W closes the
+focused pane's tab; its partner remains open.

@@ -76,7 +76,7 @@ internal static class TabMenuBuilder
         var canPair = store.CanSplitWithTab(tab.Id);
         var split = new MenuFlyoutItem
         {
-            Text = tab.IsSplitPartner ? "Close split" : canPair ? "Open beside current tab" : "Split view"
+            Text = tab.IsSplitPartner ? "Leave split view" : canPair ? "Open beside current tab" : "Split view"
         };
         split.Click += (_, _) =>
         {

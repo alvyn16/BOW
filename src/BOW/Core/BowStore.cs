@@ -73,13 +73,14 @@ public partial class BowStore : ObservableObject
                 tab.IsPinned, tab.GroupName, tab.IsMuted, DateTimeOffset.UtcNow));
 
         var index = Tabs.IndexOf(tab);
+        BowTab? splitPartner = null;
         if (tab.SplitPartnerId is Guid partnerId)
         {
-            var partner = Tabs.FirstOrDefault(t => t.Id == partnerId);
-            if (partner is not null)
+            splitPartner = Tabs.FirstOrDefault(t => t.Id == partnerId);
+            if (splitPartner is not null)
             {
-                partner.IsSplitPartner = false;
-                partner.SplitPartnerId = null;
+                splitPartner.IsSplitPartner = false;
+                splitPartner.SplitPartnerId = null;
             }
         }
         Tabs.Remove(tab);
@@ -92,8 +93,8 @@ public partial class BowStore : ObservableObject
             }
             else
             {
-                var newIndex = Math.Max(0, index - 1);
-                SetActiveTab(Tabs[newIndex].Id);
+                SetActiveTab(splitPartner is not null && Tabs.Contains(splitPartner)
+                    ? splitPartner.Id : Tabs[Math.Max(0, index - 1)].Id);
             }
         }
     }
