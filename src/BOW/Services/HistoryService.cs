@@ -38,6 +38,22 @@ public sealed class HistoryService
     public IReadOnlyList<HistoryEntry> Recent(int count = 5) =>
         _entries.Take(Math.Max(0, count)).ToArray();
 
+    public IReadOnlyList<HistoryEntry> Search(string query, int count = 5)
+    {
+        var matches = new List<HistoryEntry>(Math.Max(0, count));
+        if (count <= 0) return matches;
+        query = query.Trim();
+        foreach (var entry in _entries)
+        {
+            if (query.Length > 0
+                && !entry.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+                && !entry.Url.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
+            matches.Add(entry);
+            if (matches.Count == count) break;
+        }
+        return matches;
+    }
+
     public void RecordVisit(string url, string? title, string? faviconUrl)
     {
         if (!IsWebPage(url)) return;

@@ -9,10 +9,8 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.System;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -37,6 +35,7 @@ public sealed class MainWindow : Window
     private readonly Grid _addressOverlay;
     private readonly TextBox _addressBox;
     private readonly StackPanel _recentPages;
+    private readonly HistorySuggestions _historySuggestions;
     private readonly Button _zenExitButton;
     private AppWindowPresenter? _presenterBeforeZen;
     private bool _isZenMode;
@@ -181,6 +180,12 @@ public sealed class MainWindow : Window
         searchRow.Children.Add(_addressBox);
         addressPanel.Children.Add(searchRow);
         _recentPages = new StackPanel { Padding = new Thickness(4, 4, 4, 8) };
+        _historySuggestions = new HistorySuggestions(_recentPages, 48, 32, 14, (entry, openTab) =>
+        {
+            HideAddressOverlay();
+            if (openTab is not null && Store.Tabs.Contains(openTab)) Store.SetActiveTab(openTab.Id);
+            else if (Store.ActiveTab is { } active) active.Url = entry.Url;
+        });
         _recentPages.SizeChanged += (_, _) =>
         {
             foreach (var child in _recentPages.Children.OfType<Button>())
@@ -371,8 +376,26 @@ public sealed class MainWindow : Window
     private async Task<bool> SleepTabAsync(BowTab tab)
     {
         if (!_tabHosts.TryGetValue(tab.Id, out var host)) return true;
-        if (host.Visibility == Visibility.Visible) return false;
+        if (host.Visibility == Visibility.Visible || tab.IsLoading) return false;
         if (!await host.CanSleepAsync()) return false;
+        if (tab == Store.ActiveTab || !Store.Tabs.Contains(tab)
+            || !_tabHosts.TryGetValue(tab.Id, out var currentHost) || currentHost != host)
+            return false;
+
+        if (await host.CaptureScrollAsync())
+        {
+            if (tab == Store.ActiveTab || !Store.Tabs.Contains(tab)
+                || !_tabHosts.TryGetValue(tab.Id, out currentHost) || currentHost != host)
+            {
+                tab.SavedScrollPosition = null;
+                return false;
+            }
+            _tabHosts.Remove(tab.Id);
+            _contentGrid.Children.Remove(host);
+            host.Dispose();
+            return true;
+        }
+
         return tab != Store.ActiveTab && await host.SleepAsync();
     }
 
@@ -502,79 +525,7 @@ public sealed class MainWindow : Window
 
     private void RefreshRecentPages()
     {
-        _recentPages.Children.Clear();
-        var query = _addressBox.Text.Trim();
-        var entries = HistoryService.Instance.Recent(200).Where(entry =>
-            query.Length == 0 || entry.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || entry.Url.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(5);
-
-        foreach (var entry in entries)
-        {
-            var openTab = Store.Tabs.FirstOrDefault(tab =>
-                string.Equals(tab.Url, entry.Url, StringComparison.OrdinalIgnoreCase));
-            var row = new Button
-            {
-                Height = 48,
-                Width = _recentPages.ActualWidth > 0 ? _recentPages.ActualWidth - 8 : double.NaN,
-                Padding = new Thickness(12, 0, 12, 0),
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Background = new SolidColorBrush(Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(5)
-            };
-            var layout = new Grid();
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            FrameworkElement icon = new FontIcon
-            {
-                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = "\uE774",
-                FontSize = 15, Foreground = UI.ThemeBrushes.MutedTextBrush,
-                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center
-            };
-            if (Uri.TryCreate(entry.FaviconUrl, UriKind.Absolute, out var favicon)
-                && favicon.Scheme is "http" or "https")
-                icon = new Image
-                {
-                    Source = new BitmapImage(favicon), Width = 16, Height = 16,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            layout.Children.Add(icon);
-            var label = new TextBlock
-            {
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = UI.ThemeBrushes.TextBrush,
-                FontSize = 13
-            };
-            label.Inlines.Add(new Run { Text = entry.Title });
-            label.Inlines.Add(new Run { Text = $"  —  {new Uri(entry.Url).Host}", Foreground = UI.ThemeBrushes.MutedTextBrush });
-            Grid.SetColumn(label, 1);
-            layout.Children.Add(label);
-            if (openTab is not null)
-            {
-                var switchLabel = new TextBlock
-                {
-                    Text = "Switch to Tab  ↗", FontSize = 11,
-                    Foreground = UI.ThemeBrushes.MutedTextBrush,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(14, 0, 0, 0)
-                };
-                Grid.SetColumn(switchLabel, 2);
-                layout.Children.Add(switchLabel);
-            }
-            row.Content = layout;
-            AutomationProperties.SetName(row, $"{entry.Title}, {new Uri(entry.Url).Host}" +
-                (openTab is null ? string.Empty : ", switch to tab"));
-            row.Click += (_, _) =>
-            {
-                HideAddressOverlay();
-                if (openTab is not null) Store.SetActiveTab(openTab.Id);
-                else if (Store.ActiveTab is { } active) active.Url = entry.Url;
-            };
-            _recentPages.Children.Add(row);
-        }
+        _historySuggestions.Refresh(_addressBox.Text, Store);
     }
 
     private void AddressBox_KeyDown(object sender, KeyRoutedEventArgs e)

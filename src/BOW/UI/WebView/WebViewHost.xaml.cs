@@ -596,6 +596,29 @@ public sealed class WebViewHost : UserControl
         }
     }
 
+    public async System.Threading.Tasks.Task<bool> CaptureScrollAsync()
+    {
+        if (_tab is null || !_webViewReady) return false;
+        try
+        {
+            var position = await WebView.ExecuteScriptAsync("({ x: window.scrollX, y: window.scrollY })");
+            using var json = System.Text.Json.JsonDocument.Parse(position);
+            if (json.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !json.RootElement.TryGetProperty("x", out var x)
+                || !json.RootElement.TryGetProperty("y", out var y)
+                || x.ValueKind != System.Text.Json.JsonValueKind.Number
+                || y.ValueKind != System.Text.Json.JsonValueKind.Number)
+                return false;
+            _tab.SavedScrollPosition = position;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Could not save tab scroll position: {ex}");
+            return false;
+        }
+    }
+
     private async System.Threading.Tasks.Task WakeAsync()
     {
         if (_tab is null) return;

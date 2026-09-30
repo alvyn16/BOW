@@ -5,7 +5,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 
 namespace BOW.UI.TabStrip;
@@ -19,7 +18,8 @@ public class TabItemViewModel
 public sealed class TabStripView : UserControl
 {
     private BowStore? _store;
-    private readonly ObservableCollection<TabItemViewModel> _items = new();
+    private readonly Dictionary<Guid, TabItemView> _tabViews = new();
+    private readonly Dictionary<Guid, Button> _groupHeadings = new();
     private readonly ScrollViewer _scrollView;
     private readonly Button _addButton;
     private readonly Button _moreButton;
@@ -103,81 +103,105 @@ public sealed class TabStripView : UserControl
         this.Content = root;
     }
 
-    private object CreateTemplate()
-    {
-        return new TabElementFactory();
-    }
-
-    private class TabElementFactory : Microsoft.UI.Xaml.IElementFactory
-    {
-        public Microsoft.UI.Xaml.UIElement GetElement(Microsoft.UI.Xaml.ElementFactoryGetArgs args)
-        {
-            var view = new TabItemView();
-            view.DataContext = args.Data;
-            return view;
-        }
-
-        public void RecycleElement(Microsoft.UI.Xaml.ElementFactoryRecycleArgs args)
-        {
-            if (args.Element is Microsoft.UI.Xaml.FrameworkElement fw)
-                fw.DataContext = null;
-        }
-    }
-
     private void RefreshTabs()
     {
-        foreach (var old in TabsRepeater.Children.OfType<TabItemView>()) old.DataContext = null;
-        TabsRepeater.Children.Clear();
+        if (_store is null) return;
+        var desired = new List<UIElement>();
+        var tabIds = new HashSet<Guid>();
+        var headingIds = new HashSet<Guid>();
         string? previousGroup = null;
-        foreach (var vm in _items)
+        foreach (var tab in _store.Tabs)
         {
-            if (vm.Tab.GroupName is { } group
+            tabIds.Add(tab.Id);
+            if (tab.GroupName is { } group
                 && !string.Equals(group, previousGroup, StringComparison.OrdinalIgnoreCase))
             {
-                var heading = new Button
-                {
-                    Content = group, Height = 28, MaxWidth = 104,
-                    Padding = new Thickness(7, 0, 7, 0),
-                    FontFamily = ThemeBrushes.UiFont, FontSize = 10,
-                    Background = ThemeBrushes.SelectedBrush,
-                    BorderThickness = new Thickness(0),
-                    CornerRadius = new CornerRadius(6)
-                };
-                ToolTipService.SetToolTip(heading, $"Group: {group}. Right-click to rename or remove.");
-                heading.ContextRequested += (_, _) =>
-                    TabMenuBuilder.CreateGroupMenu(_store!, group).ShowAt(heading);
-                TabsRepeater.Children.Add(heading);
+                headingIds.Add(tab.Id);
+                desired.Add(GetOrCreateGroupHeading(tab.Id, group));
             }
-            previousGroup = vm.Tab.GroupName;
-            var el = (TabItemView)new TabElementFactory().GetElement(new Microsoft.UI.Xaml.ElementFactoryGetArgs { Data = vm });
-            el.PointerPressed += TabItem_PointerPressed;
-            el.AddHandler(UIElement.PointerPressedEvent,
-                new PointerEventHandler((_, args) =>
-                {
-                    var point = args.GetCurrentPoint(TabsRepeater);
-                    if (!point.Properties.IsLeftButtonPressed) return;
-                    _pointerDragTabId = vm.Tab.Id;
-                    _pointerDragStartX = point.Position.X;
-                }), true);
-            el.ContextRequested += TabItem_ContextRequested;
-            el.AllowDrop = true;
-            el.DragOver += (_, args) =>
-            {
-                if (args.DataView.Contains(StandardDataFormats.Text))
-                    args.AcceptedOperation = DataPackageOperation.Move;
-                args.Handled = true;
-            };
-            el.Drop += async (_, args) =>
-            {
-                if (_store is null || !args.DataView.Contains(StandardDataFormats.Text)) return;
-                var value = await args.DataView.GetTextAsync();
-                if (value.StartsWith("bow-tab:", StringComparison.Ordinal)
-                    && Guid.TryParse(value[8..], out var sourceId))
-                    _store.MoveTab(sourceId, vm.Tab.Id, args.GetPosition(el).X > el.ActualWidth / 2);
-                args.Handled = true;
-            };
-            TabsRepeater.Children.Add(el);
+            previousGroup = tab.GroupName;
+            if (!_tabViews.TryGetValue(tab.Id, out var view))
+                _tabViews[tab.Id] = view = CreateTabView(tab);
+            desired.Add(view);
         }
+
+        var keep = new HashSet<UIElement>(desired);
+        for (var i = TabsRepeater.Children.Count - 1; i >= 0; i--)
+            if (!keep.Contains(TabsRepeater.Children[i]))
+                TabsRepeater.Children.RemoveAt(i);
+        foreach (var id in _tabViews.Keys.Where(id => !tabIds.Contains(id)).ToArray())
+        {
+            _tabViews[id].DataContext = null;
+            _tabViews.Remove(id);
+        }
+        foreach (var id in _groupHeadings.Keys.Where(id => !headingIds.Contains(id)).ToArray())
+            _groupHeadings.Remove(id);
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i < TabsRepeater.Children.Count && TabsRepeater.Children[i] == desired[i]) continue;
+            var oldIndex = TabsRepeater.Children.IndexOf(desired[i]);
+            if (oldIndex >= 0) TabsRepeater.Children.RemoveAt(oldIndex);
+            TabsRepeater.Children.Insert(i, desired[i]);
+        }
+    }
+
+    private Button GetOrCreateGroupHeading(Guid id, string group)
+    {
+        if (!_groupHeadings.TryGetValue(id, out var heading))
+        {
+            heading = new Button
+            {
+                Height = 28, MaxWidth = 104,
+                Padding = new Thickness(7, 0, 7, 0),
+                FontFamily = ThemeBrushes.UiFont, FontSize = 10,
+                Background = ThemeBrushes.SelectedBrush,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(6)
+            };
+            heading.ContextRequested += (_, _) =>
+            {
+                if (_store is not null && heading.Tag is string name)
+                    TabMenuBuilder.CreateGroupMenu(_store, name).ShowAt(heading);
+            };
+            _groupHeadings[id] = heading;
+        }
+        heading.Content = group;
+        heading.Tag = group;
+        ToolTipService.SetToolTip(heading, $"Group: {group}. Right-click to rename or remove.");
+        return heading;
+    }
+
+    private TabItemView CreateTabView(BowTab tab)
+    {
+        var view = new TabItemView { DataContext = new TabItemViewModel(tab) };
+        view.PointerPressed += TabItem_PointerPressed;
+        view.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler((_, args) =>
+            {
+                var point = args.GetCurrentPoint(TabsRepeater);
+                if (!point.Properties.IsLeftButtonPressed) return;
+                _pointerDragTabId = tab.Id;
+                _pointerDragStartX = point.Position.X;
+            }), true);
+        view.ContextRequested += TabItem_ContextRequested;
+        view.AllowDrop = true;
+        view.DragOver += (_, args) =>
+        {
+            if (args.DataView.Contains(StandardDataFormats.Text))
+                args.AcceptedOperation = DataPackageOperation.Move;
+            args.Handled = true;
+        };
+        view.Drop += async (_, args) =>
+        {
+            if (_store is null || !args.DataView.Contains(StandardDataFormats.Text)) return;
+            var value = await args.DataView.GetTextAsync();
+            if (value.StartsWith("bow-tab:", StringComparison.Ordinal)
+                && Guid.TryParse(value[8..], out var sourceId))
+                _store.MoveTab(sourceId, tab.Id, args.GetPosition(view).X > view.ActualWidth / 2);
+            args.Handled = true;
+        };
+        return view;
     }
 
     public void Initialize(BowStore store)
@@ -185,8 +209,6 @@ public sealed class TabStripView : UserControl
         _store = store;
         SyncAppIcon(store.Settings.AppIconVariant);
 
-        foreach (var tab in store.Tabs)
-            _items.Add(new TabItemViewModel(tab));
         SyncGroupSubscriptions();
         RefreshTabs();
 
@@ -194,9 +216,6 @@ public sealed class TabStripView : UserControl
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                _items.Clear();
-                foreach (var tab in store.Tabs)
-                    _items.Add(new TabItemViewModel(tab));
                 SyncGroupSubscriptions();
                 RefreshTabs();
             });
