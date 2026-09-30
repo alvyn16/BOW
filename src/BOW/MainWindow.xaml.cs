@@ -37,8 +37,9 @@ public sealed class MainWindow : Window
     private readonly StackPanel _recentPages;
     private readonly HistorySuggestions _historySuggestions;
     private readonly Button _zenExitButton;
-    private AppWindowPresenter? _presenterBeforeZen;
+    private AppWindowPresenter? _presenterBeforeFullScreen;
     private bool _isZenMode;
+    private WebViewHost? _webContentFullScreenHost;
     private bool _windowActivated;
     private SettingsView? _settingsView;
     private readonly Border _splitDivider;
@@ -203,7 +204,7 @@ public sealed class MainWindow : Window
         {
             if (_windowActivated) return;
             _windowActivated = true;
-            ApplyZenPresenter();
+            ApplyFullScreenPresenter();
         };
         WireStore();
         _sleepService = new TabSleepService(Store, SleepTabAsync);
@@ -296,7 +297,17 @@ public sealed class MainWindow : Window
         bool isNewTab = active.Url == "bow:newtab" || string.IsNullOrEmpty(active.Url);
         var partner = active.SplitPartnerId is Guid partnerId
             ? Store.Tabs.FirstOrDefault(t => t.Id == partnerId) : null;
-        bool isSplit = !isNewTab && active.IsSplitPartner && partner is not null;
+        var fullScreenHost = _webContentFullScreenHost;
+        if (fullScreenHost is not null
+            && (!_tabHosts.TryGetValue(active.Id, out var activeHost) || activeHost != fullScreenHost)
+            && (partner is null || !_tabHosts.TryGetValue(partner.Id, out var splitHost)
+                || splitHost != fullScreenHost))
+        {
+            _webContentFullScreenHost = null;
+            _ = fullScreenHost.ExitFullScreenAsync();
+            fullScreenHost = null;
+        }
+        bool isSplit = fullScreenHost is null && !isNewTab && active.IsSplitPartner && partner is not null;
 
         NewTabPageView.Visibility = isNewTab ? Visibility.Visible : Visibility.Collapsed;
         foreach (var host in _tabHosts.Values) host.Visibility = Visibility.Collapsed;
@@ -304,7 +315,12 @@ public sealed class MainWindow : Window
         _contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _splitDivider.Visibility = isSplit ? Visibility.Visible : Visibility.Collapsed;
 
-        if (!isNewTab)
+        if (fullScreenHost is not null)
+        {
+            Grid.SetColumn(fullScreenHost, 0);
+            fullScreenHost.Visibility = Visibility.Visible;
+        }
+        else if (!isNewTab)
         {
             var host = GetOrCreateHost(active);
             Grid.SetColumn(host, 0);
@@ -327,10 +343,32 @@ public sealed class MainWindow : Window
     {
         if (_tabHosts.TryGetValue(tab.Id, out var host)) return host;
         host = new WebViewHost { Visibility = Visibility.Collapsed };
+        host.FullScreenChanged += OnWebContentFullScreenChanged;
         host.SetTab(tab);
         _tabHosts.Add(tab.Id, host);
         _contentGrid.Children.Insert(0, host);
         return host;
+    }
+
+    private void OnWebContentFullScreenChanged(WebViewHost host, bool containsFullScreenElement)
+    {
+        if (containsFullScreenElement)
+        {
+            if (host.Visibility != Visibility.Visible || MainSplitView.Visibility != Visibility.Visible) return;
+            if (_webContentFullScreenHost is { } previous && previous != host)
+                _ = previous.ExitFullScreenAsync();
+            _webContentFullScreenHost = host;
+            HideAddressOverlay();
+            NewTabPageView.HideRecentPages();
+            TabSwitcherView.Visibility = Visibility.Collapsed;
+        }
+        else if (_webContentFullScreenHost == host)
+        {
+            _webContentFullScreenHost = null;
+        }
+        else return;
+
+        RefreshContentArea();
     }
 
     public void RecoverTab(Guid id)
@@ -408,12 +446,14 @@ public sealed class MainWindow : Window
             HideAddressOverlay();
             ShowBrowser();
         }
-        TopBarRow.Height = zenMode ? new GridLength(0) : new GridLength(40);
-        TopBar.Visibility = zenMode ? Visibility.Collapsed : Visibility.Visible;
-        _zenExitButton.Visibility = zenMode ? Visibility.Visible : Visibility.Collapsed;
+        bool fullScreen = zenMode || _webContentFullScreenHost is not null;
+        TopBarRow.Height = fullScreen ? new GridLength(0) : new GridLength(40);
+        TopBar.Visibility = fullScreen ? Visibility.Collapsed : Visibility.Visible;
+        _zenExitButton.Visibility = zenMode && _webContentFullScreenHost is null
+            ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabLayout();
         SetWindowFrame(Store.Settings.ShowWindowFrame);
-        ApplyZenPresenter();
+        ApplyFullScreenPresenter();
     }
 
     public void SetZenMode(bool zenMode)
@@ -427,28 +467,28 @@ public sealed class MainWindow : Window
         TopBar.SyncZenMode(zenMode);
     }
 
-    private void ApplyZenPresenter()
+    private void ApplyFullScreenPresenter()
     {
         if (!_windowActivated || _appWindow is null) return;
-        if (_isZenMode)
+        if (_isZenMode || _webContentFullScreenHost is not null)
         {
             if (_appWindow.Presenter?.Kind == AppWindowPresenterKind.FullScreen) return;
-            _presenterBeforeZen = _appWindow.Presenter;
+            _presenterBeforeFullScreen = _appWindow.Presenter;
             _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
         }
         else if (_appWindow.Presenter?.Kind == AppWindowPresenterKind.FullScreen)
         {
-            if (_presenterBeforeZen is not null)
-                _appWindow.SetPresenter(_presenterBeforeZen);
+            if (_presenterBeforeFullScreen is not null)
+                _appWindow.SetPresenter(_presenterBeforeFullScreen);
             else
                 _appWindow.SetPresenter(AppWindowPresenterKind.Default);
-            _presenterBeforeZen = null;
+            _presenterBeforeFullScreen = null;
         }
     }
 
     public void SetWindowFrame(bool show)
     {
-        show &= !_isZenMode;
+        show &= !_isZenMode && _webContentFullScreenHost is null;
         _contentFrame.Margin = show ? new Thickness(8, 0, 8, 8) : new Thickness(0);
         _contentFrame.CornerRadius = show ? new CornerRadius(9) : new CornerRadius(0);
         _contentFrame.BorderThickness = show ? new Thickness(1) : new Thickness(0);
@@ -456,6 +496,7 @@ public sealed class MainWindow : Window
 
     public void ShowSettings(string? section = null)
     {
+        if (_webContentFullScreenHost is { } host) _ = host.ExitFullScreenAsync();
         if (_isZenMode) SetZenMode(false);
         HideAddressOverlay();
         if (_settingsView is null)
@@ -505,7 +546,8 @@ public sealed class MainWindow : Window
 
     public void ApplyTabLayout()
     {
-        bool sidebar = !_isZenMode && Store.Settings.TabLayout == "Sidebar";
+        bool sidebar = !_isZenMode && _webContentFullScreenHost is null
+            && Store.Settings.TabLayout == "Sidebar";
         SidebarView.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
         MainSplitView.ColumnDefinitions[0].Width = new GridLength(sidebar ? 220 : 0);
         TopBar.TabStrip.SetLayout(Store.Settings.TabLayout == "Sidebar");
@@ -594,6 +636,8 @@ public sealed class MainWindow : Window
     {
         if (_addressOverlay.Visibility == Visibility.Visible)
             HideAddressOverlay();
+        else if (_webContentFullScreenHost is { } host)
+            _ = host.ExitFullScreenAsync();
         else if (_isZenMode)
             SetZenMode(false);
         else if (TabSwitcherView.Visibility == Visibility.Visible)

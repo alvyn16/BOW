@@ -28,6 +28,7 @@ public sealed class WebViewHost : UserControl
     public Microsoft.UI.Xaml.Controls.WebView2 WebView { get; }
     public Grid WebViewErrorPanel { get; }
     public Grid SleepPanel { get; }
+    public event Action<WebViewHost, bool>? FullScreenChanged;
 
     public WebViewHost()
     {
@@ -183,6 +184,13 @@ public sealed class WebViewHost : UserControl
             core.FaviconChanged += OnFaviconChanged;
             core.PermissionRequested += OnPermissionRequested;
             core.ProcessFailed += OnProcessFailed;
+            core.ContainsFullScreenElementChanged += (_, _) =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!_disposed) FullScreenChanged?.Invoke(this, core.ContainsFullScreenElement);
+                });
+            };
 
             if (_tab is not null && !_tab.IsSleeping && !string.IsNullOrEmpty(_tab.Url))
             {
@@ -617,6 +625,13 @@ public sealed class WebViewHost : UserControl
             Debug.WriteLine($"Could not save tab scroll position: {ex}");
             return false;
         }
+    }
+
+    public async System.Threading.Tasks.Task ExitFullScreenAsync()
+    {
+        if (_disposed || !_webViewReady) return;
+        try { await WebView.ExecuteScriptAsync("document.exitFullscreen()"); }
+        catch (Exception ex) { Debug.WriteLine($"Could not exit page fullscreen: {ex}"); }
     }
 
     private async System.Threading.Tasks.Task WakeAsync()
