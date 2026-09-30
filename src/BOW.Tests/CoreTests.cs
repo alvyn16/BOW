@@ -19,6 +19,30 @@ public class BowStoreTests
         Assert.Equal(primary.Id, partner.SplitPartnerId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SplitWithExistingTab_PreservesBothTabsAndPlacesDraggedTab(bool placeOnLeft)
+    {
+        var store = CreateStore();
+        var dragged = store.AddTab("https://example.com/dragged");
+        var current = store.AddTab("https://example.com/current");
+        var tabCount = store.Tabs.Count;
+
+        Assert.True(store.SplitWithTab(dragged.Id, placeOnLeft));
+
+        Assert.Equal(tabCount, store.Tabs.Count);
+        Assert.Equal(dragged.Id, current.SplitPartnerId);
+        Assert.Equal(current.Id, dragged.SplitPartnerId);
+        Assert.Same(placeOnLeft ? dragged : current, store.ActiveTab);
+        Assert.False(store.SplitWithTab(dragged.Id, placeOnLeft));
+        store.JoinSplitTab(current.Id);
+        Assert.Contains(dragged, store.Tabs);
+        Assert.Contains(current, store.Tabs);
+        Assert.False(dragged.IsSplitPartner);
+        Assert.False(current.IsSplitPartner);
+    }
+
     [Fact]
     public void CloseSplitTab_ClearsPartnerLink()
     {
@@ -34,7 +58,7 @@ public class BowStoreTests
     }
 
     [Fact]
-    public void JoinSplitTab_RemovesPartnerAndKeepsActiveTabInStore()
+    public void JoinSplitTab_KeepsBothTabsOpen()
     {
         var store = CreateStore();
         var primary = store.AddTab("https://example.com");
@@ -44,9 +68,10 @@ public class BowStoreTests
 
         store.JoinSplitTab(primary.Id);
 
-        Assert.Same(primary, store.ActiveTab);
-        Assert.DoesNotContain(partner, store.Tabs);
+        Assert.Same(partner, store.ActiveTab);
+        Assert.Contains(partner, store.Tabs);
         Assert.Null(primary.SplitPartnerId);
+        Assert.Null(partner.SplitPartnerId);
     }
 
     [Fact]

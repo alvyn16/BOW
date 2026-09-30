@@ -30,3 +30,7 @@ and reload when reopened; if unloading is unavailable, WebView2 is suspended.
 Tabs playing media stay awake; individual sites can be
 excluded from automatic sleep in Settings or the tab menu. Tab changes are
 saved after a brief pause, and the current session is saved again on close.
+
+Drag a tab onto another tab to reorder it. Drag an inactive tab into the page
+area to open it beside the current page, on either the left or right. Closing
+split view keeps both tabs open.

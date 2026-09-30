@@ -17,6 +17,7 @@ using System.ComponentModel;
 using BOW.Services;
 using BOW.UI.Security;
 using Microsoft.Web.WebView2.Core;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace BOW;
 
@@ -44,6 +45,8 @@ public sealed class MainWindow : Window
     private bool _windowActivated;
     private SettingsView? _settingsView;
     private readonly Border _splitDivider;
+    private readonly Grid _tabDropOverlay;
+    private Guid? _draggedTabId;
     private readonly Dictionary<Guid, WebViewHost> _tabHosts = new();
     private readonly List<KeyboardAccelerator> _shortcutAccelerators = new();
     private readonly TabSleepService _sleepService;
@@ -101,6 +104,17 @@ public sealed class MainWindow : Window
 
         Grid.SetColumn(_contentGrid, 1);
         MainSplitView.Children.Add(_contentGrid);
+        _tabDropOverlay = new Grid { Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(125, 24, 24, 26)) };
+        _tabDropOverlay.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _tabDropOverlay.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var leftDropTarget = CreateTabSplitDropTarget(true);
+        var rightDropTarget = CreateTabSplitDropTarget(false);
+        Grid.SetColumn(rightDropTarget, 1);
+        _tabDropOverlay.Children.Add(leftDropTarget);
+        _tabDropOverlay.Children.Add(rightDropTarget);
+        Grid.SetColumn(_tabDropOverlay, 1);
+        MainSplitView.Children.Add(_tabDropOverlay);
         RootGrid.Children.Add(_contentFrame);
 
         TabSwitcherView = new TabSwitcherView { Visibility = Visibility.Collapsed };
@@ -349,6 +363,69 @@ public sealed class MainWindow : Window
         _tabHosts.Add(tab.Id, host);
         _contentGrid.Children.Insert(0, host);
         return host;
+    }
+
+    public Guid? DraggedTabId => _draggedTabId;
+
+    public void BeginTabDrag(Guid tabId)
+    {
+        _draggedTabId = Store.Tabs.Any(tab => tab.Id == tabId) ? tabId : null;
+        _tabDropOverlay.Visibility = _draggedTabId is Guid id
+            && Store.CanSplitWithTab(id) && MainSplitView.Visibility == Visibility.Visible
+            && _webContentFullScreenHost is null
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public void EndTabDrag()
+    {
+        _draggedTabId = null;
+        _tabDropOverlay.Visibility = Visibility.Collapsed;
+        foreach (var target in _tabDropOverlay.Children.OfType<Border>())
+            target.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+    }
+
+    private Border CreateTabSplitDropTarget(bool placeOnLeft)
+    {
+        var label = new TextBlock
+        {
+            Text = placeOnLeft ? "Open on left" : "Open on right",
+            FontFamily = UI.ThemeBrushes.UiFont, FontSize = 13,
+            Foreground = new SolidColorBrush(Colors.White),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var target = new Border
+        {
+            Child = label, AllowDrop = true,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(45, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255)),
+            BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(7),
+            Margin = new Thickness(7)
+        };
+        target.DragOver += (_, args) =>
+        {
+            if (_draggedTabId is Guid id && Store.CanSplitWithTab(id)
+                && args.DataView.Contains(StandardDataFormats.Text))
+            {
+                args.AcceptedOperation = DataPackageOperation.Move;
+                target.BorderBrush = UI.ThemeBrushes.AccentBrush;
+            }
+            args.Handled = true;
+        };
+        target.DragLeave += (_, _) => target.BorderBrush =
+            new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+        target.Drop += (_, args) =>
+        {
+            if (_draggedTabId is Guid id && Store.CanSplitWithTab(id))
+            {
+                Store.SplitWithTab(id, placeOnLeft);
+                RefreshContentArea();
+                args.AcceptedOperation = DataPackageOperation.Move;
+            }
+            EndTabDrag();
+            args.Handled = true;
+        };
+        return target;
     }
 
     private void OnWebContentFullScreenChanged(WebViewHost host, bool containsFullScreenElement)

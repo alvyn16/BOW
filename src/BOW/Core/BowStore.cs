@@ -205,7 +205,32 @@ public partial class BowStore : ObservableObject
         Tabs.Add(partner);
     }
 
-    /// <summary>Joins a split — closes the partner tab and clears split flags.</summary>
+    /// <summary>Places an existing tab beside the active tab without duplicating either page.</summary>
+    public bool CanSplitWithTab(Guid draggedId)
+    {
+        var current = ActiveTab;
+        var dragged = Tabs.FirstOrDefault(tab => tab.Id == draggedId);
+        return current is not null && dragged is not null && current != dragged
+            && !current.IsSplitPartner && !dragged.IsSplitPartner
+            && !string.IsNullOrEmpty(current.Url) && current.Url != "bow:newtab"
+            && !string.IsNullOrEmpty(dragged.Url) && dragged.Url != "bow:newtab";
+    }
+
+    public bool SplitWithTab(Guid draggedId, bool placeOnLeft)
+    {
+        if (!CanSplitWithTab(draggedId)) return false;
+        var current = ActiveTab!;
+        var dragged = Tabs.First(tab => tab.Id == draggedId);
+
+        current.IsSplitPartner = true;
+        current.SplitPartnerId = dragged.Id;
+        dragged.IsSplitPartner = true;
+        dragged.SplitPartnerId = current.Id;
+        if (placeOnLeft) SetActiveTab(dragged.Id);
+        return true;
+    }
+
+    /// <summary>Closes a split layout while keeping both tabs open.</summary>
     public void JoinSplitTab(Guid primaryId)
     {
         var primary = Tabs.FirstOrDefault(t => t.Id == primaryId);
@@ -216,8 +241,6 @@ public partial class BowStore : ObservableObject
             {
                 partner.IsSplitPartner = false;
                 partner.SplitPartnerId = null;
-                Tabs.Remove(partner);
-                if (ActiveTab == partner) SetActiveTab(primary!.Id);
             }
         }
         if (primary is not null)

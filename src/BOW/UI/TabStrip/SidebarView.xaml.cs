@@ -14,9 +14,7 @@ public sealed class SidebarView : UserControl
     private BowStore? _store;
     private readonly List<(BowTab Tab, PropertyChangedEventHandler Handler)> _tabHandlers = new();
     private readonly Dictionary<Guid, Border> _tabRows = new();
-    private Guid? _pointerDragTabId;
-    private Windows.Foundation.Point _pointerDragStart;
-    private bool _pointerDragStarted;
+    private readonly List<Border> _dropMarkers = new();
 
     public StackPanel TabList { get; }
 
@@ -70,10 +68,6 @@ public sealed class SidebarView : UserControl
         root.Children.Add(header);
 
         TabList = new StackPanel { Spacing = 2, Padding = new Thickness(8, 0, 8, 8) };
-        TabList.AddHandler(UIElement.PointerMovedEvent,
-            new PointerEventHandler(OnTabPointerMoved), true);
-        TabList.AddHandler(UIElement.PointerReleasedEvent,
-            new PointerEventHandler(OnTabPointerReleased), true);
         var scrollView = new ScrollViewer
         {
             Content = TabList,
@@ -109,6 +103,7 @@ public sealed class SidebarView : UserControl
         foreach (var (tab, handler) in _tabHandlers) tab.PropertyChanged -= handler;
         _tabHandlers.Clear();
         _tabRows.Clear();
+        _dropMarkers.Clear();
         TabList.Children.Clear();
 
         string? previousGroup = null;
@@ -135,17 +130,18 @@ public sealed class SidebarView : UserControl
                 heading.AllowDrop = true;
                 heading.DragOver += (_, args) =>
                 {
-                    if (args.DataView.Contains(StandardDataFormats.Text))
+                    if (App.MainWindow?.DraggedTabId is not null
+                        && args.DataView.Contains(StandardDataFormats.Text))
                         args.AcceptedOperation = DataPackageOperation.Move;
                     args.Handled = true;
                 };
-                heading.Drop += async (_, args) =>
+                heading.Drop += (_, args) =>
                 {
-                    if (!args.DataView.Contains(StandardDataFormats.Text)) return;
-                    var value = await args.DataView.GetTextAsync();
-                    if (value.StartsWith("bow-tab:", StringComparison.Ordinal)
-                        && Guid.TryParse(value[8..], out var sourceId))
+                    if (App.MainWindow?.DraggedTabId is Guid sourceId)
+                    {
                         _store.SetTabGroup(sourceId, group);
+                        args.AcceptedOperation = DataPackageOperation.Move;
+                    }
                     args.Handled = true;
                 };
                 TabList.Children.Add(heading);
@@ -155,6 +151,15 @@ public sealed class SidebarView : UserControl
             var layout = new Grid { Height = 36 };
             layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var dropMarker = new Border
+            {
+                Height = 2, Background = ThemeBrushes.AccentBrush,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Top,
+                Visibility = Visibility.Collapsed
+            };
+            Grid.SetColumnSpan(dropMarker, 2);
+            _dropMarkers.Add(dropMarker);
 
             var icon = new Image { Width = 15, Height = 15, VerticalAlignment = VerticalAlignment.Center };
             var fallback = new FontIcon
@@ -197,7 +202,7 @@ public sealed class SidebarView : UserControl
                 Padding = new Thickness(9, 0, 2, 0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Left,
-                CornerRadius = new CornerRadius(7)
+                CornerRadius = new CornerRadius(7), CanDrag = true
             };
             // The row owns the hover state; the default Button hover creates an inset pill.
             selectButton.Resources["ButtonBackgroundPointerOver"] = transparent;
@@ -207,36 +212,47 @@ public sealed class SidebarView : UserControl
                 App.MainWindow?.ShowBrowser();
                 _store.SetActiveTab(tab.Id);
             };
+            selectButton.DragStarting += (_, args) =>
+            {
+                args.Data.SetText($"bow-tab:{tab.Id}");
+                args.Data.RequestedOperation = DataPackageOperation.Move;
+                App.MainWindow?.BeginTabDrag(tab.Id);
+            };
+            selectButton.DropCompleted += (_, _) =>
+            {
+                foreach (var marker in _dropMarkers) marker.Visibility = Visibility.Collapsed;
+                App.MainWindow?.EndTabDrag();
+            };
             selectButton.ContextRequested += (_, _) =>
                 TabMenuBuilder.CreateTabMenu(_store, tab).ShowAt(selectButton,
                     new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
                     {
                         Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Right
                     });
-            selectButton.AddHandler(UIElement.PointerPressedEvent,
-                new PointerEventHandler((_, args) =>
-                {
-                    var point = args.GetCurrentPoint(TabList);
-                    if (!point.Properties.IsLeftButtonPressed) return;
-                    _pointerDragTabId = tab.Id;
-                    _pointerDragStart = point.Position;
-                    _pointerDragStarted = false;
-                }), true);
             selectButton.AllowDrop = true;
             selectButton.DragOver += (_, args) =>
             {
-                if (args.DataView.Contains(StandardDataFormats.Text))
+                var sourceId = App.MainWindow?.DraggedTabId;
+                if (sourceId is not null && sourceId != tab.Id
+                    && args.DataView.Contains(StandardDataFormats.Text))
+                {
                     args.AcceptedOperation = DataPackageOperation.Move;
+                    dropMarker.VerticalAlignment = args.GetPosition(selectButton).Y > selectButton.ActualHeight / 2
+                        ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+                    dropMarker.Visibility = Visibility.Visible;
+                }
                 args.Handled = true;
             };
-            selectButton.Drop += async (_, args) =>
+            selectButton.DragLeave += (_, _) => dropMarker.Visibility = Visibility.Collapsed;
+            selectButton.Drop += (_, args) =>
             {
-                if (!args.DataView.Contains(StandardDataFormats.Text)) return;
-                var value = await args.DataView.GetTextAsync();
-                if (value.StartsWith("bow-tab:", StringComparison.Ordinal)
-                    && Guid.TryParse(value[8..], out var sourceId))
+                dropMarker.Visibility = Visibility.Collapsed;
+                if (App.MainWindow?.DraggedTabId is Guid sourceId && sourceId != tab.Id)
+                {
                     _store.MoveTab(sourceId, tab.Id,
                         args.GetPosition(selectButton).Y > selectButton.ActualHeight / 2);
+                    args.AcceptedOperation = DataPackageOperation.Move;
+                }
                 args.Handled = true;
             };
             layout.Children.Add(selectButton);
@@ -257,6 +273,7 @@ public sealed class SidebarView : UserControl
             closeButton.Click += (_, _) => _store.CloseTab(tab.Id);
             Grid.SetColumn(closeButton, 1);
             layout.Children.Add(closeButton);
+            layout.Children.Add(dropMarker);
             row.Child = layout;
             ToolTipService.SetToolTip(row, tab.Title);
             row.PointerEntered += (_, _) => row.Background = ThemeBrushes.SelectedBrush;
@@ -312,47 +329,5 @@ public sealed class SidebarView : UserControl
             row.Background = id == _store?.ActiveTab?.Id
                 ? ThemeBrushes.SelectedBrush
                 : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-    }
-
-    private void OnTabPointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (_pointerDragTabId is not Guid sourceId) return;
-        var point = e.GetCurrentPoint(TabList);
-        if (!point.Properties.IsLeftButtonPressed)
-        {
-            ResetPointerDrag();
-            return;
-        }
-        if (!_pointerDragStarted && Math.Abs(point.Position.Y - _pointerDragStart.Y) > 7)
-        {
-            _pointerDragStarted = true;
-            if (_tabRows.TryGetValue(sourceId, out var row)) row.Opacity = 0.55;
-        }
-    }
-
-    private void OnTabPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        var sourceId = _pointerDragTabId;
-        var point = e.GetCurrentPoint(TabList).Position;
-        var wasDragging = _pointerDragStarted
-            || Math.Abs(point.Y - _pointerDragStart.Y) > 7;
-        ResetPointerDrag();
-        if (!wasDragging || sourceId is null || _store is null) return;
-        foreach (var (targetId, row) in _tabRows)
-        {
-            var top = row.TransformToVisual(TabList)
-                .TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
-            if (point.Y < top || point.Y > top + row.ActualHeight) continue;
-            _store.MoveTab(sourceId.Value, targetId, point.Y > top + row.ActualHeight / 2);
-            break;
-        }
-    }
-
-    private void ResetPointerDrag()
-    {
-        if (_pointerDragTabId is Guid sourceId && _tabRows.TryGetValue(sourceId, out var row))
-            row.Opacity = 1;
-        _pointerDragTabId = null;
-        _pointerDragStarted = false;
     }
 }

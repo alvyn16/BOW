@@ -73,10 +73,15 @@ internal static class TabMenuBuilder
         groups.Items.Add(newGroup);
         menu.Items.Add(groups);
 
-        var split = new MenuFlyoutItem { Text = tab.IsSplitPartner ? "Close split" : "Split view" };
+        var canPair = store.CanSplitWithTab(tab.Id);
+        var split = new MenuFlyoutItem
+        {
+            Text = tab.IsSplitPartner ? "Close split" : canPair ? "Open beside current tab" : "Split view"
+        };
         split.Click += (_, _) =>
         {
             if (tab.IsSplitPartner) store.JoinSplitTab(tab.Id);
+            else if (canPair) store.SplitWithTab(tab.Id, false);
             else { store.SetActiveTab(tab.Id); store.SplitActiveTab(); }
         };
         menu.Items.Add(split);

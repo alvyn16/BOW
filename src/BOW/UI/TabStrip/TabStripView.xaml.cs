@@ -25,8 +25,6 @@ public sealed class TabStripView : UserControl
     private readonly Button _moreButton;
     private readonly Image _appIconImage;
     private readonly Dictionary<Guid, BowTab> _observedTabs = new();
-    private Guid? _pointerDragTabId;
-    private double _pointerDragStartX;
 
     public StackPanel TabsRepeater { get; }
     public StackPanel InteractiveContent { get; }
@@ -71,8 +69,6 @@ public sealed class TabStripView : UserControl
             Orientation = Orientation.Horizontal,
             Spacing = 4
         };
-        TabsRepeater.AddHandler(UIElement.PointerReleasedEvent,
-            new PointerEventHandler(OnTabPointerReleased), true);
         _scrollView.Content = TabsRepeater;
         root.Children.Add(_scrollView);
 
@@ -174,31 +170,50 @@ public sealed class TabStripView : UserControl
 
     private TabItemView CreateTabView(BowTab tab)
     {
-        var view = new TabItemView { DataContext = new TabItemViewModel(tab) };
-        view.PointerPressed += TabItem_PointerPressed;
-        view.AddHandler(UIElement.PointerPressedEvent,
-            new PointerEventHandler((_, args) =>
-            {
-                var point = args.GetCurrentPoint(TabsRepeater);
-                if (!point.Properties.IsLeftButtonPressed) return;
-                _pointerDragTabId = tab.Id;
-                _pointerDragStartX = point.Position.X;
-            }), true);
+        var view = new TabItemView { DataContext = new TabItemViewModel(tab), CanDrag = true };
+        view.Tapped += (_, _) =>
+        {
+            App.MainWindow?.ShowBrowser();
+            _store?.SetActiveTab(tab.Id);
+        };
+        view.DragStarting += (_, args) =>
+        {
+            args.Data.SetText($"bow-tab:{tab.Id}");
+            args.Data.RequestedOperation = DataPackageOperation.Move;
+            App.MainWindow?.BeginTabDrag(tab.Id);
+        };
+        view.DropCompleted += (_, _) =>
+        {
+            foreach (var tabView in _tabViews.Values)
+                tabView.RootGrid.BorderThickness = new Thickness(0);
+            App.MainWindow?.EndTabDrag();
+        };
         view.ContextRequested += TabItem_ContextRequested;
         view.AllowDrop = true;
         view.DragOver += (_, args) =>
         {
-            if (args.DataView.Contains(StandardDataFormats.Text))
+            var sourceId = App.MainWindow?.DraggedTabId;
+            if (sourceId is not null && sourceId != tab.Id
+                && args.DataView.Contains(StandardDataFormats.Text))
+            {
                 args.AcceptedOperation = DataPackageOperation.Move;
+                var after = args.GetPosition(view).X > view.ActualWidth / 2;
+                view.RootGrid.BorderBrush = ThemeBrushes.AccentBrush;
+                view.RootGrid.BorderThickness = after
+                    ? new Thickness(0, 0, 2, 0) : new Thickness(2, 0, 0, 0);
+            }
             args.Handled = true;
         };
-        view.Drop += async (_, args) =>
+        view.DragLeave += (_, _) => view.RootGrid.BorderThickness = new Thickness(0);
+        view.Drop += (_, args) =>
         {
-            if (_store is null || !args.DataView.Contains(StandardDataFormats.Text)) return;
-            var value = await args.DataView.GetTextAsync();
-            if (value.StartsWith("bow-tab:", StringComparison.Ordinal)
-                && Guid.TryParse(value[8..], out var sourceId))
+            view.RootGrid.BorderThickness = new Thickness(0);
+            if (_store is not null && App.MainWindow?.DraggedTabId is Guid sourceId
+                && sourceId != tab.Id)
+            {
                 _store.MoveTab(sourceId, tab.Id, args.GetPosition(view).X > view.ActualWidth / 2);
+                args.AcceptedOperation = DataPackageOperation.Move;
+            }
             args.Handled = true;
         };
         return view;
@@ -243,15 +258,6 @@ public sealed class TabStripView : UserControl
         App.MainWindow?.ApplyTabLayout();
     }
 
-    internal void TabItem_PointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is TabItemView { DataContext: TabItemViewModel vm } && _store is not null)
-        {
-            App.MainWindow?.ShowBrowser();
-            _store.SetActiveTab(vm.Tab.Id);
-        }
-    }
-
     internal void TabItem_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
         if (sender is TabItemView { DataContext: TabItemViewModel vm } && _store is not null)
@@ -278,25 +284,6 @@ public sealed class TabStripView : UserControl
         {
             tab.PropertyChanged += OnTabPropertyChanged;
             _observedTabs[tab.Id] = tab;
-        }
-    }
-
-    private void OnTabPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        var sourceId = _pointerDragTabId;
-        _pointerDragTabId = null;
-        if (sourceId is null || _store is null) return;
-        var point = e.GetCurrentPoint(TabsRepeater).Position;
-        if (Math.Abs(point.X - _pointerDragStartX) <= 7) return;
-        foreach (var target in TabsRepeater.Children.OfType<TabItemView>())
-        {
-            if (target.DataContext is not TabItemViewModel vm) continue;
-            var left = target.TransformToVisual(TabsRepeater)
-                .TransformPoint(new Windows.Foundation.Point(0, 0)).X;
-            if (point.X < left || point.X > left + target.ActualWidth) continue;
-            _store.MoveTab(sourceId.Value, vm.Tab.Id,
-                point.X > left + target.ActualWidth / 2);
-            break;
         }
     }
 
