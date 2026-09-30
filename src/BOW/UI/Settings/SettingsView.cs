@@ -660,7 +660,7 @@ public sealed class SettingsView : UserControl
         };
         var keys = Enumerable.Range('A', 26).Select(code => ((char)code).ToString())
             .Concat(Enumerable.Range(0, 10).Select(number => number.ToString()))
-            .Concat(["Tab", "Plus", "Minus", "Escape"])
+            .Concat(["Tab", "Left", "Right", "Plus", "Minus", "Escape"])
             .Concat(Enumerable.Range(1, 12).Select(number => $"F{number}"))
             .ToArray();
         var key = new ComboBox

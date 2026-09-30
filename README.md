@@ -39,4 +39,4 @@ Use Ctrl+Shift+2 to leave split view while keeping both tabs. Ctrl+W closes the
 focused pane's tab; its partner remains open.
 Press Ctrl+Y to maximize the window while keeping the toolbar and tabs visible;
 press it again to restore the window. Shortcuts can be changed in Settings.
-Ctrl+A goes back and Ctrl+D goes forward in the focused tab's page history.
+Alt+Left goes back and Alt+Right goes forward in the focused tab's page history.

@@ -23,15 +23,17 @@ public class ShortcutTests
     }
 
     [Fact]
-    public void HistoryShortcuts_DefaultToCtrlAAndCtrlD()
+    public void HistoryShortcuts_DefaultToAltArrows()
     {
         var settings = new SettingsModel();
         var back = ShortcutCatalog.Commands.Single(command => command.Id == "back");
         var forward = ShortcutCatalog.Commands.Single(command => command.Id == "forward");
 
-        Assert.Equal("Ctrl+A", ShortcutCatalog.GetBinding(settings, back));
-        Assert.Equal("Ctrl+D", ShortcutCatalog.GetBinding(settings, forward));
-        Assert.False(ShortcutCatalog.TrySetBinding(settings, forward.Id, "Ctrl+A", out _));
+        Assert.Equal("Alt+Left", ShortcutCatalog.GetBinding(settings, back));
+        Assert.Equal("Alt+Right", ShortcutCatalog.GetBinding(settings, forward));
+        Assert.True(ShortcutCatalog.TryParse("alt+left", out var left));
+        Assert.Equal("Alt+Left", left.ToString());
+        Assert.False(ShortcutCatalog.TrySetBinding(settings, forward.Id, "Alt+Left", out _));
     }
 
     [Fact]

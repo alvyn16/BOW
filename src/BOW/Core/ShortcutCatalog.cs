@@ -13,8 +13,8 @@ public static class ShortcutCatalog
     public static IReadOnlyList<ShortcutDefinition> Commands { get; } =
     [
         new("address", "Search or enter address", "Ctrl+L"),
-        new("back", "Go back", "Ctrl+A"),
-        new("forward", "Go forward", "Ctrl+D"),
+        new("back", "Go back", "Alt+Left"),
+        new("forward", "Go forward", "Alt+Right"),
         new("new-tab", "New tab", "Ctrl+T"),
         new("close-tab", "Close tab", "Ctrl+W"),
         new("leave-split", "Leave split view", "Ctrl+Shift+2"),
@@ -75,8 +75,12 @@ public static class ShortcutCatalog
         key = key switch { "ADD" => "Plus", "SUBTRACT" => "Minus", _ => key };
         if (key.Length == 1 && char.IsLetter(key[0])) { }
         else if (key.Length == 1 && char.IsDigit(key[0])) { }
-        else if (key is "TAB" or "ESCAPE" or "PLUS" or "MINUS")
-            key = key switch { "TAB" => "Tab", "ESCAPE" => "Escape", "PLUS" => "Plus", _ => "Minus" };
+        else if (key is "TAB" or "ESCAPE" or "PLUS" or "MINUS" or "LEFT" or "RIGHT")
+            key = key switch
+            {
+                "TAB" => "Tab", "ESCAPE" => "Escape", "PLUS" => "Plus",
+                "MINUS" => "Minus", "LEFT" => "Left", _ => "Right"
+            };
         else if (key.Length is 2 or 3 && key[0] == 'F'
             && int.TryParse(key[1..], out var f) && f is >= 1 and <= 12) { }
         else return false;
