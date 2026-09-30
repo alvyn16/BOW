@@ -37,5 +37,5 @@ page. The page-area targets allow left or right placement. Closing split view
 keeps both tabs open.
 Use Ctrl+Shift+2 to leave split view while keeping both tabs. Ctrl+W closes the
 focused pane's tab; its partner remains open.
-Press F11 to toggle full screen. Pressing it during a full-screen video exits
+Press Ctrl+Y to toggle full screen. Pressing it during a full-screen video exits
 the video first. Shortcuts can be changed in Settings.

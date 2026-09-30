@@ -30,11 +30,11 @@ public class ShortcutTests
     }
 
     [Fact]
-    public void FullScreenShortcut_DefaultsToF11AndCanBeChanged()
+    public void FullScreenShortcut_DefaultsToCtrlYAndCanBeChanged()
     {
         var settings = new SettingsModel();
         var fullScreen = ShortcutCatalog.Commands.Single(command => command.Id == "full-screen");
-        Assert.Equal("F11", ShortcutCatalog.GetBinding(settings, fullScreen));
+        Assert.Equal("Ctrl+Y", ShortcutCatalog.GetBinding(settings, fullScreen));
         Assert.True(ShortcutCatalog.TrySetBinding(settings, fullScreen.Id, "Ctrl+F11", out _));
         Assert.False(ShortcutCatalog.TrySetBinding(settings, fullScreen.Id, "Ctrl+W", out _));
     }
