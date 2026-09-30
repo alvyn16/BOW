@@ -122,13 +122,26 @@ public sealed class TabStripView : UserControl
         {
             Content = new FontIcon
             {
-                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = glyph, FontSize = 13
+                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = glyph, FontSize = 12
             },
-            Width = 28, Height = 28, Padding = new Thickness(0),
+            Width = 24, Height = 24, Padding = new Thickness(0),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4),
             Foreground = ThemeBrushes.TextBrush, IsEnabled = false
         };
+        var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        button.Resources["ButtonBackground"] = transparent;
+        button.Resources["ButtonBackgroundPointerOver"] = ThemeBrushes.SelectedBrush;
+        button.Resources["ButtonBackgroundPressed"] = ThemeBrushes.SelectedBrush;
+        button.Resources["ButtonBackgroundDisabled"] = transparent;
+        button.Resources["ButtonBorderBrush"] = transparent;
+        button.Resources["ButtonBorderBrushPointerOver"] = transparent;
+        button.Resources["ButtonBorderBrushPressed"] = transparent;
+        button.Resources["ButtonBorderBrushDisabled"] = transparent;
+        button.Resources["ButtonForeground"] = ThemeBrushes.TextBrush;
+        button.Resources["ButtonForegroundPointerOver"] = ThemeBrushes.TextBrush;
+        button.Resources["ButtonForegroundPressed"] = ThemeBrushes.TextBrush;
+        button.Resources["ButtonForegroundDisabled"] = ThemeBrushes.MutedTextBrush;
         ToolTipService.SetToolTip(button, label);
         AutomationProperties.SetName(button, label);
         return button;
