@@ -102,6 +102,7 @@ public sealed class TabStripView : UserControl
     private void RefreshTabs()
     {
         if (_store is null) return;
+        var previousPositions = TabReorderMotion.Capture(TabsRepeater, _tabViews, false);
         var desired = new List<UIElement>();
         var tabIds = new HashSet<Guid>();
         var headingIds = new HashSet<Guid>();
@@ -140,6 +141,7 @@ public sealed class TabStripView : UserControl
             if (oldIndex >= 0) TabsRepeater.Children.RemoveAt(oldIndex);
             TabsRepeater.Children.Insert(i, desired[i]);
         }
+        TabReorderMotion.Animate(TabsRepeater, _tabViews, previousPositions, false);
     }
 
     private Button GetOrCreateGroupHeading(Guid id, string group)
@@ -170,9 +172,11 @@ public sealed class TabStripView : UserControl
 
     private TabItemView CreateTabView(BowTab tab)
     {
-        var view = new TabItemView { DataContext = new TabItemViewModel(tab), CanDrag = true };
+        var view = new TabItemView { DataContext = new TabItemViewModel(tab) };
+        var gesture = new TabDragGesture(view);
         view.Tapped += (_, _) =>
         {
+            if (gesture.WasDragged) return;
             App.MainWindow?.ShowBrowser();
             _store?.SetActiveTab(tab.Id);
         };
@@ -197,21 +201,36 @@ public sealed class TabStripView : UserControl
                 && args.DataView.Contains(StandardDataFormats.Text))
             {
                 args.AcceptedOperation = DataPackageOperation.Move;
-                var after = args.GetPosition(view).X > view.ActualWidth / 2;
-                view.RootGrid.BorderBrush = ThemeBrushes.AccentBrush;
-                view.RootGrid.BorderThickness = after
-                    ? new Thickness(0, 0, 2, 0) : new Thickness(2, 0, 0, 0);
+                if (_store?.ActiveTab?.Id == tab.Id && _store.CanSplitWithTab(sourceId.Value))
+                {
+                    view.RootGrid.BorderThickness = new Thickness(0);
+                    App.MainWindow?.PreviewTabSplit(sourceId.Value);
+                }
+                else
+                {
+                    var after = args.GetPosition(view).X > view.ActualWidth / 2;
+                    view.RootGrid.BorderBrush = ThemeBrushes.AccentBrush;
+                    view.RootGrid.BorderThickness = after
+                        ? new Thickness(0, 0, 2, 0) : new Thickness(2, 0, 0, 0);
+                }
             }
             args.Handled = true;
         };
-        view.DragLeave += (_, _) => view.RootGrid.BorderThickness = new Thickness(0);
+        view.DragLeave += (_, _) =>
+        {
+            view.RootGrid.BorderThickness = new Thickness(0);
+            App.MainWindow?.ClearTabSplitPreview();
+        };
         view.Drop += (_, args) =>
         {
             view.RootGrid.BorderThickness = new Thickness(0);
             if (_store is not null && App.MainWindow?.DraggedTabId is Guid sourceId
                 && sourceId != tab.Id)
             {
-                _store.MoveTab(sourceId, tab.Id, args.GetPosition(view).X > view.ActualWidth / 2);
+                if (_store.ActiveTab?.Id == tab.Id && _store.CanSplitWithTab(sourceId))
+                    App.MainWindow.SplitDraggedTab(false);
+                else
+                    _store.MoveTab(sourceId, tab.Id, args.GetPosition(view).X > view.ActualWidth / 2);
                 args.AcceptedOperation = DataPackageOperation.Move;
             }
             args.Handled = true;

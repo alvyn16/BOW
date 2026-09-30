@@ -46,6 +46,8 @@ public sealed class MainWindow : Window
     private SettingsView? _settingsView;
     private readonly Border _splitDivider;
     private readonly Grid _tabDropOverlay;
+    private readonly Border _leftTabDropTarget;
+    private readonly Border _rightTabDropTarget;
     private Guid? _draggedTabId;
     private readonly Dictionary<Guid, WebViewHost> _tabHosts = new();
     private readonly List<KeyboardAccelerator> _shortcutAccelerators = new();
@@ -108,11 +110,11 @@ public sealed class MainWindow : Window
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(125, 24, 24, 26)) };
         _tabDropOverlay.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _tabDropOverlay.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var leftDropTarget = CreateTabSplitDropTarget(true);
-        var rightDropTarget = CreateTabSplitDropTarget(false);
-        Grid.SetColumn(rightDropTarget, 1);
-        _tabDropOverlay.Children.Add(leftDropTarget);
-        _tabDropOverlay.Children.Add(rightDropTarget);
+        _leftTabDropTarget = CreateTabSplitDropTarget(true);
+        _rightTabDropTarget = CreateTabSplitDropTarget(false);
+        Grid.SetColumn(_rightTabDropTarget, 1);
+        _tabDropOverlay.Children.Add(_leftTabDropTarget);
+        _tabDropOverlay.Children.Add(_rightTabDropTarget);
         Grid.SetColumn(_tabDropOverlay, 1);
         MainSplitView.Children.Add(_tabDropOverlay);
         RootGrid.Children.Add(_contentFrame);
@@ -370,10 +372,38 @@ public sealed class MainWindow : Window
     public void BeginTabDrag(Guid tabId)
     {
         _draggedTabId = Store.Tabs.Any(tab => tab.Id == tabId) ? tabId : null;
+        if (_draggedTabId is Guid draggedId
+            && Store.Tabs.FirstOrDefault(tab => tab.Id == draggedId) is { } tab)
+        {
+            var title = string.IsNullOrWhiteSpace(tab.Title) ? tab.Url : tab.Title;
+            if (title.Length > 45) title = title[..42] + "...";
+            ((TextBlock)_leftTabDropTarget.Child).Text = $"{title} on left";
+            ((TextBlock)_rightTabDropTarget.Child).Text = $"{title} on right";
+        }
         _tabDropOverlay.Visibility = _draggedTabId is Guid id
             && Store.CanSplitWithTab(id) && MainSplitView.Visibility == Visibility.Visible
             && _webContentFullScreenHost is null
             ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public void PreviewTabSplit(Guid tabId)
+    {
+        if (_draggedTabId != tabId || !Store.CanSplitWithTab(tabId)) return;
+        _tabDropOverlay.Visibility = Visibility.Visible;
+        _rightTabDropTarget.BorderBrush = UI.ThemeBrushes.AccentBrush;
+    }
+
+    public void ClearTabSplitPreview()
+    {
+        _rightTabDropTarget.BorderBrush =
+            new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+    }
+
+    public void SplitDraggedTab(bool placeOnLeft)
+    {
+        if (_draggedTabId is Guid id && Store.SplitWithTab(id, placeOnLeft))
+            RefreshContentArea();
+        EndTabDrag();
     }
 
     public void EndTabDrag()
@@ -382,6 +412,8 @@ public sealed class MainWindow : Window
         _tabDropOverlay.Visibility = Visibility.Collapsed;
         foreach (var target in _tabDropOverlay.Children.OfType<Border>())
             target.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+        ((TextBlock)_leftTabDropTarget.Child).Text = "Open on left";
+        ((TextBlock)_rightTabDropTarget.Child).Text = "Open on right";
     }
 
     private Border CreateTabSplitDropTarget(bool placeOnLeft)
@@ -392,7 +424,12 @@ public sealed class MainWindow : Window
             FontFamily = UI.ThemeBrushes.UiFont, FontSize = 13,
             Foreground = new SolidColorBrush(Colors.White),
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 2, MaxWidth = 220,
+            Margin = new Thickness(12)
         };
         var target = new Border
         {
@@ -418,11 +455,10 @@ public sealed class MainWindow : Window
         {
             if (_draggedTabId is Guid id && Store.CanSplitWithTab(id))
             {
-                Store.SplitWithTab(id, placeOnLeft);
-                RefreshContentArea();
+                SplitDraggedTab(placeOnLeft);
                 args.AcceptedOperation = DataPackageOperation.Move;
             }
-            EndTabDrag();
+            else EndTabDrag();
             args.Handled = true;
         };
         return target;

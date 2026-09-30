@@ -14,7 +14,7 @@ public sealed class SidebarView : UserControl
     private BowStore? _store;
     private readonly List<(BowTab Tab, PropertyChangedEventHandler Handler)> _tabHandlers = new();
     private readonly Dictionary<Guid, Border> _tabRows = new();
-    private readonly List<Border> _dropMarkers = new();
+    private readonly Dictionary<Guid, Border> _dropMarkers = new();
 
     public StackPanel TabList { get; }
 
@@ -100,10 +100,15 @@ public sealed class SidebarView : UserControl
     public void Refresh()
     {
         if (_store is null) return;
-        foreach (var (tab, handler) in _tabHandlers) tab.PropertyChanged -= handler;
-        _tabHandlers.Clear();
-        _tabRows.Clear();
-        _dropMarkers.Clear();
+        var previousPositions = TabReorderMotion.Capture(TabList, _tabRows, true);
+        var currentIds = _store.Tabs.Select(tab => tab.Id).ToHashSet();
+        foreach (var (tab, handler) in _tabHandlers.Where(entry => !currentIds.Contains(entry.Tab.Id)).ToArray())
+        {
+            tab.PropertyChanged -= handler;
+            _tabHandlers.Remove((tab, handler));
+            _tabRows.Remove(tab.Id);
+            _dropMarkers.Remove(tab.Id);
+        }
         TabList.Children.Clear();
 
         string? previousGroup = null;
@@ -147,6 +152,11 @@ public sealed class SidebarView : UserControl
                 TabList.Children.Add(heading);
             }
             previousGroup = tab.GroupName;
+            if (_tabRows.TryGetValue(tab.Id, out var existingRow))
+            {
+                TabList.Children.Add(existingRow);
+                continue;
+            }
             var row = new Border { CornerRadius = new CornerRadius(7) };
             var layout = new Grid { Height = 36 };
             layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -159,7 +169,7 @@ public sealed class SidebarView : UserControl
                 Visibility = Visibility.Collapsed
             };
             Grid.SetColumnSpan(dropMarker, 2);
-            _dropMarkers.Add(dropMarker);
+            _dropMarkers[tab.Id] = dropMarker;
 
             var icon = new Image { Width = 15, Height = 15, VerticalAlignment = VerticalAlignment.Center };
             var fallback = new FontIcon
@@ -202,13 +212,15 @@ public sealed class SidebarView : UserControl
                 Padding = new Thickness(9, 0, 2, 0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Left,
-                CornerRadius = new CornerRadius(7), CanDrag = true
+                CornerRadius = new CornerRadius(7)
             };
             // The row owns the hover state; the default Button hover creates an inset pill.
             selectButton.Resources["ButtonBackgroundPointerOver"] = transparent;
             selectButton.Resources["ButtonBackgroundPressed"] = transparent;
+            var gesture = new TabDragGesture(selectButton);
             selectButton.Click += (_, _) =>
             {
+                if (gesture.WasDragged) return;
                 App.MainWindow?.ShowBrowser();
                 _store.SetActiveTab(tab.Id);
             };
@@ -220,7 +232,7 @@ public sealed class SidebarView : UserControl
             };
             selectButton.DropCompleted += (_, _) =>
             {
-                foreach (var marker in _dropMarkers) marker.Visibility = Visibility.Collapsed;
+                foreach (var marker in _dropMarkers.Values) marker.Visibility = Visibility.Collapsed;
                 App.MainWindow?.EndTabDrag();
             };
             selectButton.ContextRequested += (_, _) =>
@@ -237,20 +249,35 @@ public sealed class SidebarView : UserControl
                     && args.DataView.Contains(StandardDataFormats.Text))
                 {
                     args.AcceptedOperation = DataPackageOperation.Move;
-                    dropMarker.VerticalAlignment = args.GetPosition(selectButton).Y > selectButton.ActualHeight / 2
-                        ? VerticalAlignment.Bottom : VerticalAlignment.Top;
-                    dropMarker.Visibility = Visibility.Visible;
+                    if (_store.ActiveTab?.Id == tab.Id && _store.CanSplitWithTab(sourceId.Value))
+                    {
+                        dropMarker.Visibility = Visibility.Collapsed;
+                        App.MainWindow?.PreviewTabSplit(sourceId.Value);
+                    }
+                    else
+                    {
+                        dropMarker.VerticalAlignment = args.GetPosition(selectButton).Y > selectButton.ActualHeight / 2
+                            ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+                        dropMarker.Visibility = Visibility.Visible;
+                    }
                 }
                 args.Handled = true;
             };
-            selectButton.DragLeave += (_, _) => dropMarker.Visibility = Visibility.Collapsed;
+            selectButton.DragLeave += (_, _) =>
+            {
+                dropMarker.Visibility = Visibility.Collapsed;
+                App.MainWindow?.ClearTabSplitPreview();
+            };
             selectButton.Drop += (_, args) =>
             {
                 dropMarker.Visibility = Visibility.Collapsed;
                 if (App.MainWindow?.DraggedTabId is Guid sourceId && sourceId != tab.Id)
                 {
-                    _store.MoveTab(sourceId, tab.Id,
-                        args.GetPosition(selectButton).Y > selectButton.ActualHeight / 2);
+                    if (_store.ActiveTab?.Id == tab.Id && _store.CanSplitWithTab(sourceId))
+                        App.MainWindow.SplitDraggedTab(false);
+                    else
+                        _store.MoveTab(sourceId, tab.Id,
+                            args.GetPosition(selectButton).Y > selectButton.ActualHeight / 2);
                     args.AcceptedOperation = DataPackageOperation.Move;
                 }
                 args.Handled = true;
@@ -321,6 +348,7 @@ public sealed class SidebarView : UserControl
             TabList.Children.Add(row);
         }
         RefreshActiveSelection();
+        TabReorderMotion.Animate(TabList, _tabRows, previousPositions, true);
     }
 
     private void RefreshActiveSelection()
