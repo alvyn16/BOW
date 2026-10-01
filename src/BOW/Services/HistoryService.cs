@@ -7,8 +7,7 @@ public sealed record HistoryEntry(string Url, string Title, string? FaviconUrl, 
 /// <summary>Recent successful page visits, saved between browser sessions.</summary>
 public sealed class HistoryService
 {
-    public static HistoryService Instance { get; } = new(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BOW", "history.json"));
+    public static HistoryService Instance { get; } = new(BrowserData.FilePath("history.json"));
 
     private const int MaxEntries = 200;
     private readonly string _path;

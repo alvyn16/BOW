@@ -377,6 +377,9 @@ public sealed class MainWindow : Window
         return host;
     }
 
+    internal Microsoft.Web.WebView2.Core.CoreWebView2? BenchmarkCore(Guid id) =>
+        _tabHosts.TryGetValue(id, out var host) ? host.WebView.CoreWebView2 : null;
+
     public Guid? DraggedTabId => _draggedTabId;
 
     public void BeginTabDrag(Guid tabId)

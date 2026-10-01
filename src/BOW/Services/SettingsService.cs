@@ -7,10 +7,7 @@ namespace BOW.Services;
 /// </summary>
 public static class SettingsService
 {
-    private static readonly string _settingsPath =
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "BOW", "settings.json");
+    private static readonly string _settingsPath = BrowserData.FilePath("settings.json");
 
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 

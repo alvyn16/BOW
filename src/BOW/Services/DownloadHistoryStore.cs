@@ -11,8 +11,7 @@ public sealed record DownloadRecord(
 /// <summary>Saved download history; active operations are never serialized.</summary>
 public static class DownloadHistoryStore
 {
-    public static string DefaultPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BOW", "downloads.json");
+    public static string DefaultPath { get; } = BrowserData.FilePath("downloads.json");
 
     public static IReadOnlyList<DownloadRecord> Load(string path)
     {

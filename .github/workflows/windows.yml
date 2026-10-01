@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      benchmark:
+        description: Run three isolated browser performance samples
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -69,6 +74,9 @@ jobs:
           "BOW_RELEASE_EXE=$exe" >> $env:GITHUB_ENV
       - name: Check startup from the extracted release
         run: ./scripts/Test-Startup.ps1 -Executable $env:BOW_RELEASE_EXE -ReportDirectory TestResults/startup
+      - name: Measure isolated browser performance
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark
+        run: ./scripts/Measure-Performance.ps1 -Executable $env:BOW_RELEASE_EXE -Runs 3 -ReportDirectory TestResults/performance
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -77,6 +85,7 @@ jobs:
           path: |
             TestResults/*.trx
             TestResults/startup/*.json
+            TestResults/performance/*.json
           if-no-files-found: warn
       - name: Upload portable release
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -12,15 +12,20 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private SessionAutoSaver? _sessionAutoSaver;
     private readonly string? _smokeTestReport;
+    private readonly string? _benchmarkReport;
+    private readonly System.Diagnostics.Stopwatch? _started;
 
     public static BowStore Store { get; private set; } = null!;
     public static MainWindow? MainWindow { get; private set; }
 
     public App() : this(null) { }
 
-    internal App(string? smokeTestReport)
+    internal App(string? smokeTestReport, string? benchmarkReport = null,
+        System.Diagnostics.Stopwatch? started = null)
     {
         _smokeTestReport = smokeTestReport;
+        _benchmarkReport = benchmarkReport;
+        _started = started;
         InitializeComponent();
     }
 
@@ -31,7 +36,8 @@ public partial class App : Application
             _ = StartupSmokeTest.RunAsync(this, _smokeTestReport);
             return;
         }
-        Store = new BowStore();
+        Store = _benchmarkReport is null ? new BowStore() : new BowStore(
+            new SettingsModel { TabSleepMinutes = 0 }, Array.Empty<SessionEntry>());
         _mainWindow = new MainWindow();
         _sessionAutoSaver = new SessionAutoSaver(Store,
             dispatch: action => _mainWindow.DispatcherQueue.TryEnqueue(() => action()));
@@ -39,6 +45,8 @@ public partial class App : Application
         _mainWindow.Closed += OnMainWindowClosed;
         ApplyTheme(_mainWindow, Store.Settings.Theme);
         _mainWindow.Activate();
+        if (_benchmarkReport is not null)
+            _ = PerformanceBenchmark.RunAsync(this, _mainWindow, _benchmarkReport, _started!);
     }
 
     private void OnMainWindowClosed(object sender, WindowEventArgs args)

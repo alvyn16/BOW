@@ -70,6 +70,11 @@ and reload when reopened; if unloading is unavailable, WebView2 is suspended.
 Tabs playing media stay awake; individual sites can be
 excluded from automatic sleep in Settings or the tab menu. Tab changes are
 saved after a brief pause, and the current session is saved again on close.
+Session saves retain a validated previous snapshot in `session.json.bak`.
+If the current session is missing or damaged, BOW restores the backup; without
+a usable backup, it salvages valid entries from a parseable session file.
+An intentionally empty session stays empty. The backup contains browsing URLs
+and should be treated as private data alongside the current session.
 
 Drag a tab onto another tab to reorder it. Drag an inactive tab onto the active
 tab, or into the page area, to preview split view and open it beside the current
@@ -80,6 +85,13 @@ focused pane's tab; its partner remains open.
 Press Ctrl+Y to maximize the window while keeping the toolbar and tabs visible;
 press it again to restore the window. Shortcuts can be changed in Settings.
 Alt+Left goes back and Alt+Right goes forward in the focused tab's page history.
+
+## Contributing and security
+
+See [contribution guidance](CONTRIBUTING.md) and [private security reporting](SECURITY.md).
+Use the repository issue templates for bugs and feature requests.
+For startup, tab-switch, memory, and tab-sleep measurements, see
+[the repeatable performance benchmark](docs/PERFORMANCE.md).
 
 ## License
 

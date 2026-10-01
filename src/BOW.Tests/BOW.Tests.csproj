@@ -26,6 +26,7 @@
     <Compile Include="..\BOW\Core\BrowsingSafety.cs" Link="Core\BrowsingSafety.cs" />
     <Compile Include="..\BOW\Services\SettingsService.cs" Link="Services\SettingsService.cs" />
     <Compile Include="..\BOW\Services\SessionManager.cs" Link="Services\SessionManager.cs" />
+    <Compile Include="..\BOW\Services\BrowserData.cs" Link="Services\BrowserData.cs" />
     <Compile Include="..\BOW\Services\SessionAutoSaver.cs" Link="Services\SessionAutoSaver.cs" />
     <Compile Include="..\BOW\Services\SearchService.cs" Link="Services\SearchService.cs" />
     <Compile Include="..\BOW\Services\HistoryService.cs" Link="Services\HistoryService.cs" />

@@ -11,12 +11,10 @@ public record SessionEntry(string Url, bool IsPinned, bool IsActive = false,
 /// </summary>
 public static class SessionManager
 {
-    private static readonly string _sessionPath =
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "BOW", "session.json");
+    private static readonly string _sessionPath = BrowserData.FilePath("session.json");
 
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private static readonly object _gate = new();
 
     /// <summary>Saves all tabs, including sleeping and blank tabs. Atomic write.</summary>
     public static void Save(IEnumerable<BOW.Core.BowTab> tabs, Guid? activeTabId = null) =>
@@ -24,7 +22,7 @@ public static class SessionManager
 
     public static void SaveTo(string path, IEnumerable<BOW.Core.BowTab> tabs, Guid? activeTabId = null)
     {
-        try
+        lock (_gate) try
         {
             var entries = tabs
                 .Where(t => !string.IsNullOrEmpty(t.Url))
@@ -37,39 +35,68 @@ public static class SessionManager
 
             var tmp = path + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(entries, _jsonOptions));
-            File.Move(tmp, path, overwrite: true);
+            // Rotate only a fully valid session; never replace a good backup with damage.
+            if (TryRead(path, out var previous, out var complete) && complete)
+            {
+                RewriteSanitized(path, previous);
+                File.Replace(tmp, path, path + ".bak");
+            }
+            else
+                File.Move(tmp, path, overwrite: true);
         }
         catch { /* never crash on save */ }
     }
 
-    /// <summary>Loads the saved session. Returns empty list if missing or corrupt.</summary>
+    /// <summary>Restores the current session, or its last valid backup if damaged.</summary>
     public static IReadOnlyList<SessionEntry> Load() => LoadFrom(_sessionPath);
 
     public static IReadOnlyList<SessionEntry> LoadFrom(string path)
     {
+        lock (_gate)
+        {
+            var currentReadable = TryRead(path, out var current, out var complete);
+            if (currentReadable && complete) { RewriteSanitized(path, current); return current; }
+            if (TryRead(path + ".bak", out var backup, out var backupComplete) && backupComplete)
+            { RewriteSanitized(path + ".bak", backup); return backup; }
+            return currentReadable ? current : [];
+        }
+    }
+
+    private static bool TryRead(string path, out List<SessionEntry> entries, out bool complete)
+    {
+        entries = [];
+        complete = false;
         try
         {
-            if (!File.Exists(path))
-                return [];
-
-            var json = File.ReadAllText(path);
-            var entries = JsonSerializer.Deserialize<List<SessionEntry>>(json) ?? [];
-            var sanitized = entries.Select(entry => entry with { Url = PersistedUrl.Sanitize(entry.Url) }).ToList();
-            if (!entries.SequenceEqual(sanitized))
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Array) return false;
+            complete = true;
+            foreach (var element in document.RootElement.EnumerateArray())
             {
                 try
                 {
-                    var tmp = path + ".tmp";
-                    File.WriteAllText(tmp, JsonSerializer.Serialize(sanitized, _jsonOptions));
-                    File.Move(tmp, path, overwrite: true);
+                    var entry = element.Deserialize<SessionEntry>();
+                    if (entry is null || string.IsNullOrWhiteSpace(entry.Url)) { complete = false; continue; }
+                    entries.Add(entry with { Url = PersistedUrl.Sanitize(entry.Url) });
                 }
-                catch { /* still restore sanitized tabs if migration cannot be written */ }
+                catch (JsonException) { complete = false; }
             }
-            return sanitized;
+            return true;
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        { return false; }
+    }
+
+    private static void RewriteSanitized(string path, List<SessionEntry> entries)
+    {
+        try
         {
-            return [];
+            var json = JsonSerializer.Serialize(entries, _jsonOptions);
+            if (File.ReadAllText(path) == json) return;
+            File.WriteAllText(path + ".sanitize.tmp", json);
+            File.Move(path + ".sanitize.tmp", path, overwrite: true);
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { /* Recovery must still work on read-only storage. */ }
     }
 }
