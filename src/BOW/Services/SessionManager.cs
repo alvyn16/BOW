@@ -11,10 +11,7 @@ public record SessionEntry(string Url, bool IsPinned, bool IsActive = false,
 /// </summary>
 public static class SessionManager
 {
-    private static readonly string _sessionPath =
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "BOW", "session.json");
+    private static readonly string _sessionPath = BrowserData.FilePath("session.json");
 
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
     private static readonly object _gate = new();
@@ -39,8 +36,11 @@ public static class SessionManager
             var tmp = path + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(entries, _jsonOptions));
             // Rotate only a fully valid session; never replace a good backup with damage.
-            if (TryRead(path, out _, out var complete) && complete)
+            if (TryRead(path, out var previous, out var complete) && complete)
+            {
+                RewriteSanitized(path, previous);
                 File.Replace(tmp, path, path + ".bak");
+            }
             else
                 File.Move(tmp, path, overwrite: true);
         }
@@ -93,8 +93,8 @@ public static class SessionManager
         {
             var json = JsonSerializer.Serialize(entries, _jsonOptions);
             if (File.ReadAllText(path) == json) return;
-            File.WriteAllText(path + ".tmp", json);
-            File.Move(path + ".tmp", path, overwrite: true);
+            File.WriteAllText(path + ".sanitize.tmp", json);
+            File.Move(path + ".sanitize.tmp", path, overwrite: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { /* Recovery must still work on read-only storage. */ }

@@ -45,6 +45,18 @@ public sealed class SessionRecoveryTests : IDisposable
     }
 
     [Fact]
+    public void BackupRotationSanitizesExistingUrlsAndPreservesNewSave()
+    {
+        File.WriteAllText(PathName, "[{\"Url\":\"https://example.org?code=secret\",\"IsPinned\":true,\"IsActive\":true,\"GroupName\":\"Work\",\"IsMuted\":true}]");
+        Save("https://example.org/new");
+        Assert.DoesNotContain("secret", File.ReadAllText(PathName + ".bak"));
+        Assert.Equal("https://example.org/new", Assert.Single(SessionManager.LoadFrom(PathName)).Url);
+        var restored = Assert.Single(SessionManager.LoadFrom(PathName + ".bak"));
+        Assert.True(restored.IsPinned); Assert.True(restored.IsActive); Assert.True(restored.IsMuted);
+        Assert.Equal("Work", restored.GroupName);
+    }
+
+    [Fact]
     public void BothDamagedFilesReturnEmptyWithoutThrowing()
     {
         File.WriteAllText(PathName, "null"); File.WriteAllText(PathName + ".bak", "garbage");
