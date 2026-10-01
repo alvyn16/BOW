@@ -1,4 +1,5 @@
 using BOW.Core;
+using BOW.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -21,6 +22,37 @@ internal static class TabMenuBuilder
         pin.Click += (_, _) => tab.IsPinned = !tab.IsPinned;
         menu.Items.Add(pin);
 
+        var sleep = new MenuFlyoutItem
+        {
+            Text = "Sleep tab now",
+            IsEnabled = tab != store.ActiveTab && !tab.IsSleeping && !tab.IsLoading
+        };
+        sleep.Click += async (_, _) =>
+        {
+            if (App.MainWindow is { } window) await window.SleepTabNowAsync(tab);
+        };
+        menu.Items.Add(sleep);
+
+        if (Uri.TryCreate(tab.Url, UriKind.Absolute, out var address)
+            && address.Scheme is "http" or "https")
+        {
+            var host = address.Host;
+            var excluded = TabSleepPolicy.IsExcluded(tab.Url, store.Settings.TabSleepExcludedHosts);
+            var exception = new MenuFlyoutItem
+            {
+                Text = excluded ? "Allow sleeping this site" : "Never sleep this site"
+            };
+            exception.Click += (_, _) =>
+            {
+                store.Settings.TabSleepExcludedHosts ??= [];
+                store.Settings.TabSleepExcludedHosts.RemoveAll(item =>
+                    string.Equals(item, host, StringComparison.OrdinalIgnoreCase));
+                if (!excluded) store.Settings.TabSleepExcludedHosts.Add(host);
+                SettingsService.Save(store.Settings);
+            };
+            menu.Items.Add(exception);
+        }
+
         var groups = new MenuFlyoutSubItem { Text = "Move to group" };
         var noGroup = new MenuFlyoutItem { Text = "No group" };
         noGroup.Click += (_, _) => store.SetTabGroup(tab.Id, null);
@@ -41,10 +73,15 @@ internal static class TabMenuBuilder
         groups.Items.Add(newGroup);
         menu.Items.Add(groups);
 
-        var split = new MenuFlyoutItem { Text = tab.IsSplitPartner ? "Close split" : "Split view" };
+        var canPair = store.CanSplitWithTab(tab.Id);
+        var split = new MenuFlyoutItem
+        {
+            Text = tab.IsSplitPartner ? "Leave split view" : canPair ? "Open beside current tab" : "Split view"
+        };
         split.Click += (_, _) =>
         {
             if (tab.IsSplitPartner) store.JoinSplitTab(tab.Id);
+            else if (canPair) store.SplitWithTab(tab.Id, false);
             else { store.SetActiveTab(tab.Id); store.SplitActiveTab(); }
         };
         menu.Items.Add(split);

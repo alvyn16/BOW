@@ -7,6 +7,8 @@ UpgradeLog.htm
 
 **/bin/
 **/obj/
+dist/
+TestResults/
 
 *.binlog
 *.log

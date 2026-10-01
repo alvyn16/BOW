@@ -159,6 +159,19 @@ public sealed class DownloadService
             System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{item.LocalPath}\"");
     }
 
+    public void ClearHistorySince(DateTimeOffset? since)
+    {
+        var removed = Downloads.Where(item => item.Operation is null
+            && item.State is not (DownloadState.InProgress or DownloadState.Paused)
+            && (since is null || item.StartedAt >= since.Value)).ToArray();
+        if (removed.Length == 0) return;
+        var remaining = Downloads.Except(removed).ToArray();
+        DownloadHistoryStore.Save(DownloadHistoryStore.DefaultPath, remaining.Select(item =>
+            new DownloadRecord(item.Id, item.Uri, item.FileName, item.LocalPath,
+                item.StartedAt, item.State, item.BytesReceived, item.TotalBytes, item.FailureReason)));
+        foreach (var item in removed) Downloads.Remove(item);
+    }
+
     private void Persist()
     {
         try

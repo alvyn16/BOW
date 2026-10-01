@@ -14,6 +14,7 @@ public sealed class TabItemView : UserControl
     public Grid RootGrid { get; }
     public Image FaviconImage { get; }
     public Ellipse FallbackDot { get; }
+    public FontIcon SleepIcon { get; }
     public FontIcon PinIcon { get; }
     public FontIcon MuteIcon { get; }
     public Border ActiveBar { get; }
@@ -39,6 +40,14 @@ public sealed class TabItemView : UserControl
 
         FallbackDot = new Ellipse { Width = 12, Height = 12, Fill = new SolidColorBrush(Microsoft.UI.Colors.Gray), Visibility = Visibility.Visible };
         innerGrid.Children.Add(FallbackDot);
+
+        SleepIcon = new FontIcon
+        {
+            FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = "\uE708",
+            FontSize = 14, Foreground = ThemeBrushes.MutedTextBrush,
+            Visibility = Visibility.Collapsed
+        };
+        innerGrid.Children.Add(SleepIcon);
 
 
         RootGrid.Children.Add(innerGrid);
@@ -117,7 +126,13 @@ public sealed class TabItemView : UserControl
     {
         if (_tab is null) return;
 
-        if (Uri.TryCreate(_tab.FaviconUrl, UriKind.Absolute, out var faviconUri))
+        SleepIcon.Visibility = _tab.IsSleeping ? Visibility.Visible : Visibility.Collapsed;
+        if (_tab.IsSleeping)
+        {
+            FaviconImage.Visibility = Visibility.Collapsed;
+            FallbackDot.Visibility = Visibility.Collapsed;
+        }
+        else if (Uri.TryCreate(_tab.FaviconUrl, UriKind.Absolute, out var faviconUri))
         {
             FaviconImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(faviconUri);
             FaviconImage.Visibility = Visibility.Visible;
@@ -132,7 +147,8 @@ public sealed class TabItemView : UserControl
 
         PinIcon.Visibility = _tab.IsPinned ? Visibility.Visible : Visibility.Collapsed;
         MuteIcon.Visibility = _tab.IsMuted ? Visibility.Visible : Visibility.Collapsed;
-        ToolTipService.SetToolTip(this, _tab.IsMuted ? $"{_tab.Title} · Muted" : _tab.Title);
+        ToolTipService.SetToolTip(this, _tab.IsSleeping ? $"{_tab.Title} · Sleeping"
+            : _tab.IsMuted ? $"{_tab.Title} · Muted" : _tab.Title);
 
         RefreshActiveState();
     }

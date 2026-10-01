@@ -5,7 +5,7 @@ using System.Collections.ObjectModel;
 namespace BOW.Core;
 
 public sealed record ClosedTabEntry(Guid Id, string Url, string Title,
-    bool IsPinned, string? GroupName, bool IsMuted);
+    bool IsPinned, string? GroupName, bool IsMuted, DateTimeOffset ClosedAt);
 
 /// <summary>
 /// Central application state. Single source of truth for all tabs and settings.
@@ -70,16 +70,17 @@ public partial class BowStore : ObservableObject
         // Save to closed stack (omit newtab pages)
         if (!string.IsNullOrEmpty(tab.Url) && tab.Url != "bow:newtab")
             _closedTabsStack.Push(new ClosedTabEntry(Guid.NewGuid(), tab.Url, tab.Title,
-                tab.IsPinned, tab.GroupName, tab.IsMuted));
+                tab.IsPinned, tab.GroupName, tab.IsMuted, DateTimeOffset.UtcNow));
 
         var index = Tabs.IndexOf(tab);
+        BowTab? splitPartner = null;
         if (tab.SplitPartnerId is Guid partnerId)
         {
-            var partner = Tabs.FirstOrDefault(t => t.Id == partnerId);
-            if (partner is not null)
+            splitPartner = Tabs.FirstOrDefault(t => t.Id == partnerId);
+            if (splitPartner is not null)
             {
-                partner.IsSplitPartner = false;
-                partner.SplitPartnerId = null;
+                splitPartner.IsSplitPartner = false;
+                splitPartner.SplitPartnerId = null;
             }
         }
         Tabs.Remove(tab);
@@ -92,8 +93,8 @@ public partial class BowStore : ObservableObject
             }
             else
             {
-                var newIndex = Math.Max(0, index - 1);
-                SetActiveTab(Tabs[newIndex].Id);
+                SetActiveTab(splitPartner is not null && Tabs.Contains(splitPartner)
+                    ? splitPartner.Id : Tabs[Math.Max(0, index - 1)].Id);
             }
         }
     }
@@ -113,6 +114,14 @@ public partial class BowStore : ObservableObject
     {
         if (_closedTabsStack.Count == 0) return;
         ReopenClosedTab(_closedTabsStack.Peek().Id);
+    }
+
+    public void ClearRecentlyClosedSince(DateTimeOffset? since)
+    {
+        var remaining = _closedTabsStack.Where(entry =>
+            since is not null && entry.ClosedAt < since.Value).Reverse().ToArray();
+        _closedTabsStack.Clear();
+        foreach (var entry in remaining) _closedTabsStack.Push(entry);
     }
 
     public void ReopenClosedTab(Guid id)
@@ -197,7 +206,32 @@ public partial class BowStore : ObservableObject
         Tabs.Add(partner);
     }
 
-    /// <summary>Joins a split — closes the partner tab and clears split flags.</summary>
+    /// <summary>Places an existing tab beside the active tab without duplicating either page.</summary>
+    public bool CanSplitWithTab(Guid draggedId)
+    {
+        var current = ActiveTab;
+        var dragged = Tabs.FirstOrDefault(tab => tab.Id == draggedId);
+        return current is not null && dragged is not null && current != dragged
+            && !current.IsSplitPartner && !dragged.IsSplitPartner
+            && !string.IsNullOrEmpty(current.Url) && current.Url != "bow:newtab"
+            && !string.IsNullOrEmpty(dragged.Url) && dragged.Url != "bow:newtab";
+    }
+
+    public bool SplitWithTab(Guid draggedId, bool placeOnLeft)
+    {
+        if (!CanSplitWithTab(draggedId)) return false;
+        var current = ActiveTab!;
+        var dragged = Tabs.First(tab => tab.Id == draggedId);
+
+        current.IsSplitPartner = true;
+        current.SplitPartnerId = dragged.Id;
+        dragged.IsSplitPartner = true;
+        dragged.SplitPartnerId = current.Id;
+        if (placeOnLeft) SetActiveTab(dragged.Id);
+        return true;
+    }
+
+    /// <summary>Closes a split layout while keeping both tabs open.</summary>
     public void JoinSplitTab(Guid primaryId)
     {
         var primary = Tabs.FirstOrDefault(t => t.Id == primaryId);
@@ -208,8 +242,6 @@ public partial class BowStore : ObservableObject
             {
                 partner.IsSplitPartner = false;
                 partner.SplitPartnerId = null;
-                Tabs.Remove(partner);
-                if (ActiveTab == partner) SetActiveTab(primary!.Id);
             }
         }
         if (primary is not null)

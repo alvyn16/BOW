@@ -4,8 +4,6 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Microsoft.UI.Xaml.Documents;
 
 namespace BOW.UI.TopBarView;
 
@@ -13,6 +11,7 @@ public sealed class NewTabPage : UserControl
 {
     private readonly Border _recentFrame;
     private readonly StackPanel _recentPages;
+    private readonly HistorySuggestions _historySuggestions;
     private bool _showRecentPages;
     public TextBox SearchBox { get; }
 
@@ -71,6 +70,11 @@ public sealed class NewTabPage : UserControl
         root.Children.Add(searchFrame);
 
         _recentPages = new StackPanel();
+        _historySuggestions = new HistorySuggestions(_recentPages, 44, 30, 10, (entry, openTab) =>
+        {
+            if (openTab is not null && App.Store.Tabs.Contains(openTab)) App.Store.SetActiveTab(openTab.Id);
+            else if (App.Store.ActiveTab is { } active) active.Url = entry.Url;
+        });
         _recentFrame = new Border
         {
             MaxWidth = 480,
@@ -115,80 +119,8 @@ public sealed class NewTabPage : UserControl
 
     private void RefreshRecentPages()
     {
-        _recentPages.Children.Clear();
-        var query = SearchBox.Text.Trim();
-        var entries = HistoryService.Instance.Recent(200).Where(entry =>
-            query.Length == 0 || entry.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || entry.Url.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(5);
-
-        foreach (var entry in entries)
-        {
-            var openTab = App.Store.Tabs.FirstOrDefault(tab =>
-                string.Equals(tab.Url, entry.Url, StringComparison.OrdinalIgnoreCase));
-            var row = new Button
-            {
-                Height = 44,
-                Padding = new Thickness(12, 0, 12, 0),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(5)
-            };
-            var layout = new Grid();
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            FrameworkElement icon = new FontIcon
-            {
-                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = "\uE774",
-                FontSize = 15, Foreground = ThemeBrushes.MutedTextBrush,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            if (Uri.TryCreate(entry.FaviconUrl, UriKind.Absolute, out var favicon)
-                && favicon.Scheme is "http" or "https")
-                icon = new Image { Source = new BitmapImage(favicon), Width = 16, Height = 16,
-                    VerticalAlignment = VerticalAlignment.Center };
-            layout.Children.Add(icon);
-
-            var label = new TextBlock
-            {
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = ThemeBrushes.TextBrush,
-                FontFamily = ThemeBrushes.UiFont,
-                FontSize = 13
-            };
-            label.Inlines.Add(new Run { Text = entry.Title });
-            label.Inlines.Add(new Run { Text = $"  —  {new Uri(entry.Url).Host}",
-                Foreground = ThemeBrushes.MutedTextBrush });
-            Grid.SetColumn(label, 1);
-            layout.Children.Add(label);
-            if (openTab is not null)
-            {
-                var switchLabel = new TextBlock
-                {
-                    Text = "Switch to Tab  ↗", FontSize = 11,
-                    FontFamily = ThemeBrushes.UiFont,
-                    Foreground = ThemeBrushes.MutedTextBrush,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(10, 0, 0, 0)
-                };
-                Grid.SetColumn(switchLabel, 2);
-                layout.Children.Add(switchLabel);
-            }
-            row.Content = layout;
-            AutomationProperties.SetName(row, $"{entry.Title}, {new Uri(entry.Url).Host}" +
-                (openTab is null ? string.Empty : ", switch to tab"));
-            row.Click += (_, _) =>
-            {
-                if (openTab is not null) App.Store.SetActiveTab(openTab.Id);
-                else if (App.Store.ActiveTab is { } active) active.Url = entry.Url;
-            };
-            _recentPages.Children.Add(row);
-        }
-
-        _recentFrame.Visibility = _recentPages.Children.Count == 0
+        _historySuggestions.Refresh(SearchBox.Text, App.Store);
+        _recentFrame.Visibility = _historySuggestions.VisibleCount == 0
             ? Visibility.Collapsed : Visibility.Visible;
     }
 

@@ -29,6 +29,12 @@ public class SettingsModel
     /// <summary>Minutes before an idle tab is put to sleep.</summary>
     public int TabSleepMinutes { get; set; } = 10;
 
+    /// <summary>Exact host names excluded from automatic tab sleep.</summary>
+    public List<string> TabSleepExcludedHosts { get; set; } = [];
+
+    /// <summary>"Off" | "Basic" | "Balanced" | "Strict".</summary>
+    public string TrackingProtectionLevel { get; set; } = "Balanced";
+
     /// <summary>Restore the previous session on launch.</summary>
     public bool RestoreSessionOnStart { get; set; } = true;
 

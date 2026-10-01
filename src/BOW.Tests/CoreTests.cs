@@ -19,6 +19,30 @@ public class BowStoreTests
         Assert.Equal(primary.Id, partner.SplitPartnerId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SplitWithExistingTab_PreservesBothTabsAndPlacesDraggedTab(bool placeOnLeft)
+    {
+        var store = CreateStore();
+        var dragged = store.AddTab("https://example.com/dragged");
+        var current = store.AddTab("https://example.com/current");
+        var tabCount = store.Tabs.Count;
+
+        Assert.True(store.SplitWithTab(dragged.Id, placeOnLeft));
+
+        Assert.Equal(tabCount, store.Tabs.Count);
+        Assert.Equal(dragged.Id, current.SplitPartnerId);
+        Assert.Equal(current.Id, dragged.SplitPartnerId);
+        Assert.Same(placeOnLeft ? dragged : current, store.ActiveTab);
+        Assert.False(store.SplitWithTab(dragged.Id, placeOnLeft));
+        store.JoinSplitTab(current.Id);
+        Assert.Contains(dragged, store.Tabs);
+        Assert.Contains(current, store.Tabs);
+        Assert.False(dragged.IsSplitPartner);
+        Assert.False(current.IsSplitPartner);
+    }
+
     [Fact]
     public void CloseSplitTab_ClearsPartnerLink()
     {
@@ -34,7 +58,24 @@ public class BowStoreTests
     }
 
     [Fact]
-    public void JoinSplitTab_RemovesPartnerAndKeepsActiveTabInStore()
+    public void ClosingActiveSplitTab_ActivatesRemainingPartner()
+    {
+        var store = CreateStore();
+        var partner = store.AddTab("https://example.com/partner");
+        store.AddTab("https://example.com/unrelated");
+        var active = store.AddTab("https://example.com/active");
+        Assert.True(store.SplitWithTab(partner.Id, placeOnLeft: false));
+
+        store.CloseTab(active.Id);
+
+        Assert.DoesNotContain(active, store.Tabs);
+        Assert.Same(partner, store.ActiveTab);
+        Assert.False(partner.IsSplitPartner);
+        Assert.Null(partner.SplitPartnerId);
+    }
+
+    [Fact]
+    public void JoinSplitTab_KeepsBothTabsOpen()
     {
         var store = CreateStore();
         var primary = store.AddTab("https://example.com");
@@ -44,9 +85,10 @@ public class BowStoreTests
 
         store.JoinSplitTab(primary.Id);
 
-        Assert.Same(primary, store.ActiveTab);
-        Assert.DoesNotContain(partner, store.Tabs);
+        Assert.Same(partner, store.ActiveTab);
+        Assert.Contains(partner, store.Tabs);
         Assert.Null(primary.SplitPartnerId);
+        Assert.Null(partner.SplitPartnerId);
     }
 
     [Fact]
@@ -115,6 +157,19 @@ public class BowStoreTests
         Assert.Equal("Research", store.ActiveTab.GroupName);
         Assert.True(store.ActiveTab.IsMuted);
         Assert.Single(store.RecentlyClosedTabs);
+    }
+
+    [Fact]
+    public void ClearingHistoryAlsoClearsRecentlyClosedTabs()
+    {
+        var store = CreateStore();
+        var tab = store.AddTab("https://example.com/one");
+        store.CloseTab(tab.Id);
+        Assert.Single(store.RecentlyClosedTabs);
+
+        store.ClearRecentlyClosedSince(DateTimeOffset.UtcNow.AddHours(-1));
+
+        Assert.Empty(store.RecentlyClosedTabs);
     }
 }
 
@@ -247,7 +302,7 @@ public class SettingsServiceTests
 public class SessionManagerTests
 {
     [Fact]
-    public void TabChangesAreSavedImmediatelyAndRestoredAfterUnexpectedExit()
+    public void TabChangesAreDebouncedAndFlushedOnClose()
     {
         var directory = Path.Combine(Path.GetTempPath(), "bow-session-test-" + Guid.NewGuid());
         var path = Path.Combine(directory, "session.json");
@@ -263,7 +318,8 @@ public class SessionManagerTests
                 first.GroupName = "Research";
                 first.IsMuted = true;
                 var second = store.AddTab("https://example.org/two");
-                Assert.Equal(2, SessionManager.LoadFrom(path).Count);
+                Assert.True(SpinWait.SpinUntil(() => SessionManager.LoadFrom(path).Count == 2,
+                    TimeSpan.FromSeconds(3)));
                 Assert.True(SessionManager.LoadFrom(path)[1].IsActive);
                 store.SetActiveTab(first.Id);
                 store.CloseTab(second.Id);

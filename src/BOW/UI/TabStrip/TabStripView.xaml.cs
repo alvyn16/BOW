@@ -1,11 +1,11 @@
 using BOW.Core;
 using BOW.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 
 namespace BOW.UI.TabStrip;
@@ -19,14 +19,16 @@ public class TabItemViewModel
 public sealed class TabStripView : UserControl
 {
     private BowStore? _store;
-    private readonly ObservableCollection<TabItemViewModel> _items = new();
+    private readonly Dictionary<Guid, TabItemView> _tabViews = new();
+    private readonly Dictionary<Guid, Button> _groupHeadings = new();
     private readonly ScrollViewer _scrollView;
     private readonly Button _addButton;
     private readonly Button _moreButton;
     private readonly Image _appIconImage;
+    private readonly Button _backButton;
+    private readonly Button _forwardButton;
+    private readonly Button _reloadButton;
     private readonly Dictionary<Guid, BowTab> _observedTabs = new();
-    private Guid? _pointerDragTabId;
-    private double _pointerDragStartX;
 
     public StackPanel TabsRepeater { get; }
     public StackPanel InteractiveContent { get; }
@@ -59,6 +61,19 @@ public sealed class TabStripView : UserControl
         sidebarToggleBtn.Click += SidebarToggle_Click;
         root.Children.Add(sidebarToggleBtn);
 
+        _backButton = CreateNavigationButton("\uE72B", "Back");
+        _backButton.Click += (_, _) => App.MainWindow?.GoBack();
+        root.Children.Add(_backButton);
+
+        _forwardButton = CreateNavigationButton("\uE72A", "Forward");
+        _forwardButton.Click += (_, _) => App.MainWindow?.GoForward();
+        root.Children.Add(_forwardButton);
+
+        _reloadButton = CreateNavigationButton("\uE72C", "Reload");
+        _reloadButton.Margin = new Thickness(0, 0, 8, 0);
+        _reloadButton.Click += (_, _) => App.MainWindow?.ReloadFocusedTab();
+        root.Children.Add(_reloadButton);
+
         _scrollView = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
@@ -71,8 +86,6 @@ public sealed class TabStripView : UserControl
             Orientation = Orientation.Horizontal,
             Spacing = 4
         };
-        TabsRepeater.AddHandler(UIElement.PointerReleasedEvent,
-            new PointerEventHandler(OnTabPointerReleased), true);
         _scrollView.Content = TabsRepeater;
         root.Children.Add(_scrollView);
 
@@ -103,81 +116,181 @@ public sealed class TabStripView : UserControl
         this.Content = root;
     }
 
-    private object CreateTemplate()
+    private static Button CreateNavigationButton(string glyph, string label)
     {
-        return new TabElementFactory();
+        var button = new Button
+        {
+            Content = new FontIcon
+            {
+                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = glyph, FontSize = 12
+            },
+            Width = 24, Height = 24, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4),
+            Foreground = ThemeBrushes.TextBrush, IsEnabled = false
+        };
+        var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        button.Resources["ButtonBackground"] = transparent;
+        button.Resources["ButtonBackgroundPointerOver"] = ThemeBrushes.SelectedBrush;
+        button.Resources["ButtonBackgroundPressed"] = ThemeBrushes.SelectedBrush;
+        button.Resources["ButtonBackgroundDisabled"] = transparent;
+        button.Resources["ButtonBorderBrush"] = transparent;
+        button.Resources["ButtonBorderBrushPointerOver"] = transparent;
+        button.Resources["ButtonBorderBrushPressed"] = transparent;
+        button.Resources["ButtonBorderBrushDisabled"] = transparent;
+        button.Resources["ButtonForeground"] = ThemeBrushes.TextBrush;
+        button.Resources["ButtonForegroundPointerOver"] = ThemeBrushes.TextBrush;
+        button.Resources["ButtonForegroundPressed"] = ThemeBrushes.TextBrush;
+        button.Resources["ButtonForegroundDisabled"] = ThemeBrushes.MutedTextBrush;
+        ToolTipService.SetToolTip(button, label);
+        AutomationProperties.SetName(button, label);
+        return button;
     }
 
-    private class TabElementFactory : Microsoft.UI.Xaml.IElementFactory
+    public void SetNavigationState(bool canGoBack, bool canGoForward, bool canReload)
     {
-        public Microsoft.UI.Xaml.UIElement GetElement(Microsoft.UI.Xaml.ElementFactoryGetArgs args)
-        {
-            var view = new TabItemView();
-            view.DataContext = args.Data;
-            return view;
-        }
-
-        public void RecycleElement(Microsoft.UI.Xaml.ElementFactoryRecycleArgs args)
-        {
-            if (args.Element is Microsoft.UI.Xaml.FrameworkElement fw)
-                fw.DataContext = null;
-        }
+        _backButton.IsEnabled = canGoBack;
+        _forwardButton.IsEnabled = canGoForward;
+        _reloadButton.IsEnabled = canReload;
     }
 
     private void RefreshTabs()
     {
-        foreach (var old in TabsRepeater.Children.OfType<TabItemView>()) old.DataContext = null;
-        TabsRepeater.Children.Clear();
+        if (_store is null) return;
+        var previousPositions = TabReorderMotion.Capture(TabsRepeater, _tabViews, false);
+        var desired = new List<UIElement>();
+        var tabIds = new HashSet<Guid>();
+        var headingIds = new HashSet<Guid>();
         string? previousGroup = null;
-        foreach (var vm in _items)
+        foreach (var tab in _store.Tabs)
         {
-            if (vm.Tab.GroupName is { } group
+            tabIds.Add(tab.Id);
+            if (tab.GroupName is { } group
                 && !string.Equals(group, previousGroup, StringComparison.OrdinalIgnoreCase))
             {
-                var heading = new Button
-                {
-                    Content = group, Height = 28, MaxWidth = 104,
-                    Padding = new Thickness(7, 0, 7, 0),
-                    FontFamily = ThemeBrushes.UiFont, FontSize = 10,
-                    Background = ThemeBrushes.SelectedBrush,
-                    BorderThickness = new Thickness(0),
-                    CornerRadius = new CornerRadius(6)
-                };
-                ToolTipService.SetToolTip(heading, $"Group: {group}. Right-click to rename or remove.");
-                heading.ContextRequested += (_, _) =>
-                    TabMenuBuilder.CreateGroupMenu(_store!, group).ShowAt(heading);
-                TabsRepeater.Children.Add(heading);
+                headingIds.Add(tab.Id);
+                desired.Add(GetOrCreateGroupHeading(tab.Id, group));
             }
-            previousGroup = vm.Tab.GroupName;
-            var el = (TabItemView)new TabElementFactory().GetElement(new Microsoft.UI.Xaml.ElementFactoryGetArgs { Data = vm });
-            el.PointerPressed += TabItem_PointerPressed;
-            el.AddHandler(UIElement.PointerPressedEvent,
-                new PointerEventHandler((_, args) =>
-                {
-                    var point = args.GetCurrentPoint(TabsRepeater);
-                    if (!point.Properties.IsLeftButtonPressed) return;
-                    _pointerDragTabId = vm.Tab.Id;
-                    _pointerDragStartX = point.Position.X;
-                }), true);
-            el.ContextRequested += TabItem_ContextRequested;
-            el.AllowDrop = true;
-            el.DragOver += (_, args) =>
-            {
-                if (args.DataView.Contains(StandardDataFormats.Text))
-                    args.AcceptedOperation = DataPackageOperation.Move;
-                args.Handled = true;
-            };
-            el.Drop += async (_, args) =>
-            {
-                if (_store is null || !args.DataView.Contains(StandardDataFormats.Text)) return;
-                var value = await args.DataView.GetTextAsync();
-                if (value.StartsWith("bow-tab:", StringComparison.Ordinal)
-                    && Guid.TryParse(value[8..], out var sourceId))
-                    _store.MoveTab(sourceId, vm.Tab.Id, args.GetPosition(el).X > el.ActualWidth / 2);
-                args.Handled = true;
-            };
-            TabsRepeater.Children.Add(el);
+            previousGroup = tab.GroupName;
+            if (!_tabViews.TryGetValue(tab.Id, out var view))
+                _tabViews[tab.Id] = view = CreateTabView(tab);
+            desired.Add(view);
         }
+
+        var keep = new HashSet<UIElement>(desired);
+        for (var i = TabsRepeater.Children.Count - 1; i >= 0; i--)
+            if (!keep.Contains(TabsRepeater.Children[i]))
+                TabsRepeater.Children.RemoveAt(i);
+        foreach (var id in _tabViews.Keys.Where(id => !tabIds.Contains(id)).ToArray())
+        {
+            _tabViews[id].DataContext = null;
+            _tabViews.Remove(id);
+        }
+        foreach (var id in _groupHeadings.Keys.Where(id => !headingIds.Contains(id)).ToArray())
+            _groupHeadings.Remove(id);
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i < TabsRepeater.Children.Count && TabsRepeater.Children[i] == desired[i]) continue;
+            var oldIndex = TabsRepeater.Children.IndexOf(desired[i]);
+            if (oldIndex >= 0) TabsRepeater.Children.RemoveAt(oldIndex);
+            TabsRepeater.Children.Insert(i, desired[i]);
+        }
+        TabReorderMotion.Animate(TabsRepeater, _tabViews, previousPositions, false);
+    }
+
+    private Button GetOrCreateGroupHeading(Guid id, string group)
+    {
+        if (!_groupHeadings.TryGetValue(id, out var heading))
+        {
+            heading = new Button
+            {
+                Height = 28, MaxWidth = 104,
+                Padding = new Thickness(7, 0, 7, 0),
+                FontFamily = ThemeBrushes.UiFont, FontSize = 10,
+                Background = ThemeBrushes.SelectedBrush,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(6)
+            };
+            heading.ContextRequested += (_, _) =>
+            {
+                if (_store is not null && heading.Tag is string name)
+                    TabMenuBuilder.CreateGroupMenu(_store, name).ShowAt(heading);
+            };
+            _groupHeadings[id] = heading;
+        }
+        heading.Content = group;
+        heading.Tag = group;
+        ToolTipService.SetToolTip(heading, $"Group: {group}. Right-click to rename or remove.");
+        return heading;
+    }
+
+    private TabItemView CreateTabView(BowTab tab)
+    {
+        var view = new TabItemView { DataContext = new TabItemViewModel(tab) };
+        var gesture = new TabDragGesture(view);
+        view.Tapped += (_, _) =>
+        {
+            if (gesture.WasDragged) return;
+            App.MainWindow?.ShowBrowser();
+            _store?.SetActiveTab(tab.Id);
+        };
+        view.DragStarting += (_, args) =>
+        {
+            args.Data.SetText($"bow-tab:{tab.Id}");
+            args.Data.RequestedOperation = DataPackageOperation.Move;
+            App.MainWindow?.BeginTabDrag(tab.Id);
+        };
+        view.DropCompleted += (_, _) =>
+        {
+            foreach (var tabView in _tabViews.Values)
+                tabView.RootGrid.BorderThickness = new Thickness(0);
+            App.MainWindow?.EndTabDrag();
+        };
+        view.ContextRequested += TabItem_ContextRequested;
+        view.AllowDrop = true;
+        view.DragOver += (_, args) =>
+        {
+            var sourceId = App.MainWindow?.DraggedTabId;
+            if (sourceId is not null && sourceId != tab.Id
+                && args.DataView.Contains(StandardDataFormats.Text))
+            {
+                args.AcceptedOperation = DataPackageOperation.Move;
+                if (_store?.ActiveTab?.Id == tab.Id && _store.CanSplitWithTab(sourceId.Value))
+                {
+                    view.RootGrid.BorderThickness = new Thickness(0);
+                    App.MainWindow?.PreviewTabSplit(sourceId.Value);
+                }
+                else
+                {
+                    var after = args.GetPosition(view).X > view.ActualWidth / 2;
+                    view.RootGrid.BorderBrush = ThemeBrushes.AccentBrush;
+                    view.RootGrid.BorderThickness = after
+                        ? new Thickness(0, 0, 2, 0) : new Thickness(2, 0, 0, 0);
+                }
+            }
+            args.Handled = true;
+        };
+        view.DragLeave += (_, _) =>
+        {
+            view.RootGrid.BorderThickness = new Thickness(0);
+            App.MainWindow?.ClearTabSplitPreview();
+        };
+        view.Drop += (_, args) =>
+        {
+            view.RootGrid.BorderThickness = new Thickness(0);
+            if (_store is not null && App.MainWindow?.DraggedTabId is Guid sourceId
+                && sourceId != tab.Id)
+            {
+                if (_store.ActiveTab?.Id == tab.Id && _store.CanSplitWithTab(sourceId))
+                    App.MainWindow.SplitDraggedTab(false);
+                else
+                    _store.MoveTab(sourceId, tab.Id, args.GetPosition(view).X > view.ActualWidth / 2);
+                args.AcceptedOperation = DataPackageOperation.Move;
+            }
+            args.Handled = true;
+        };
+        return view;
     }
 
     public void Initialize(BowStore store)
@@ -185,8 +298,6 @@ public sealed class TabStripView : UserControl
         _store = store;
         SyncAppIcon(store.Settings.AppIconVariant);
 
-        foreach (var tab in store.Tabs)
-            _items.Add(new TabItemViewModel(tab));
         SyncGroupSubscriptions();
         RefreshTabs();
 
@@ -194,9 +305,6 @@ public sealed class TabStripView : UserControl
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                _items.Clear();
-                foreach (var tab in store.Tabs)
-                    _items.Add(new TabItemViewModel(tab));
                 SyncGroupSubscriptions();
                 RefreshTabs();
             });
@@ -222,15 +330,6 @@ public sealed class TabStripView : UserControl
         _store.Settings.TabLayout = _store.Settings.TabLayout == "Sidebar" ? "Strip" : "Sidebar";
         SettingsService.Save(_store.Settings);
         App.MainWindow?.ApplyTabLayout();
-    }
-
-    internal void TabItem_PointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is TabItemView { DataContext: TabItemViewModel vm } && _store is not null)
-        {
-            App.MainWindow?.ShowBrowser();
-            _store.SetActiveTab(vm.Tab.Id);
-        }
     }
 
     internal void TabItem_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
@@ -259,25 +358,6 @@ public sealed class TabStripView : UserControl
         {
             tab.PropertyChanged += OnTabPropertyChanged;
             _observedTabs[tab.Id] = tab;
-        }
-    }
-
-    private void OnTabPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        var sourceId = _pointerDragTabId;
-        _pointerDragTabId = null;
-        if (sourceId is null || _store is null) return;
-        var point = e.GetCurrentPoint(TabsRepeater).Position;
-        if (Math.Abs(point.X - _pointerDragStartX) <= 7) return;
-        foreach (var target in TabsRepeater.Children.OfType<TabItemView>())
-        {
-            if (target.DataContext is not TabItemViewModel vm) continue;
-            var left = target.TransformToVisual(TabsRepeater)
-                .TransformPoint(new Windows.Foundation.Point(0, 0)).X;
-            if (point.X < left || point.X > left + target.ActualWidth) continue;
-            _store.MoveTab(sourceId.Value, vm.Tab.Id,
-                point.X > left + target.ActualWidth / 2);
-            break;
         }
     }
 

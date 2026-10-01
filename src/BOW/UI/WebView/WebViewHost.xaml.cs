@@ -28,6 +28,8 @@ public sealed class WebViewHost : UserControl
     public Microsoft.UI.Xaml.Controls.WebView2 WebView { get; }
     public Grid WebViewErrorPanel { get; }
     public Grid SleepPanel { get; }
+    public event Action<WebViewHost, bool>? FullScreenChanged;
+    public event Action<WebViewHost>? NavigationStateChanged;
 
     public WebViewHost()
     {
@@ -167,11 +169,17 @@ public sealed class WebViewHost : UserControl
             var core = WebView.CoreWebView2 ?? throw _initializationException
                 ?? new System.InvalidOperationException("WebView2 initialization completed without a browser instance.");
             _webViewReady = true;
+            try { TrackingProtectionService.Apply(core, App.Store.Settings.TrackingProtectionLevel); }
+            catch (Exception ex) { Debug.WriteLine($"Could not apply tracking protection: {ex}"); }
             core.IsMuted = _tab?.IsMuted ?? false;
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.IsWebMessageEnabled = false;
 
             core.NavigationCompleted += OnNavigationCompleted;
+            core.HistoryChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_disposed) NavigationStateChanged?.Invoke(this);
+            });
             core.NavigationStarting += (_, _) => _downloadNavigationPending = false;
             core.SourceChanged += OnSourceChanged;
             core.DocumentTitleChanged += OnDocumentTitleChanged;
@@ -183,6 +191,14 @@ public sealed class WebViewHost : UserControl
             core.FaviconChanged += OnFaviconChanged;
             core.PermissionRequested += OnPermissionRequested;
             core.ProcessFailed += OnProcessFailed;
+            core.ContainsFullScreenElementChanged += (_, _) =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!_disposed) FullScreenChanged?.Invoke(this, core.ContainsFullScreenElement);
+                });
+            };
+            NavigationStateChanged?.Invoke(this);
 
             if (_tab is not null && !_tab.IsSleeping && !string.IsNullOrEmpty(_tab.Url))
             {
@@ -262,6 +278,7 @@ public sealed class WebViewHost : UserControl
                 ShowNavigationError(url, status);
             _ = ApplyZoomAsync();
             _ = RestoreScrollAsync();
+            NavigationStateChanged?.Invoke(this);
         });
     }
 
@@ -582,15 +599,48 @@ public sealed class WebViewHost : UserControl
         catch { return false; }
     }
 
-    public async System.Threading.Tasks.Task SleepAsync()
+    public async System.Threading.Tasks.Task<bool> SleepAsync()
     {
-        if (_tab is null || !_webViewReady) return;
+        if (_tab is null || !_webViewReady || WebView.CoreWebView2 is not { } core) return false;
         try
         {
-            var scroll = await WebView.ExecuteScriptAsync("({x:window.scrollX,y:window.scrollY})");
-            _tab.SavedScrollPosition = scroll;
+            return await core.TrySuspendAsync();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Could not suspend tab: {ex}");
+            return false;
+        }
+    }
+
+    public async System.Threading.Tasks.Task<bool> CaptureScrollAsync()
+    {
+        if (_tab is null || !_webViewReady) return false;
+        try
+        {
+            var position = await WebView.ExecuteScriptAsync("({ x: window.scrollX, y: window.scrollY })");
+            using var json = System.Text.Json.JsonDocument.Parse(position);
+            if (json.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !json.RootElement.TryGetProperty("x", out var x)
+                || !json.RootElement.TryGetProperty("y", out var y)
+                || x.ValueKind != System.Text.Json.JsonValueKind.Number
+                || y.ValueKind != System.Text.Json.JsonValueKind.Number)
+                return false;
+            _tab.SavedScrollPosition = position;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Could not save tab scroll position: {ex}");
+            return false;
+        }
+    }
+
+    public async System.Threading.Tasks.Task ExitFullScreenAsync()
+    {
+        if (_disposed || !_webViewReady) return;
+        try { await WebView.ExecuteScriptAsync("document.exitFullscreen()"); }
+        catch (Exception ex) { Debug.WriteLine($"Could not exit page fullscreen: {ex}"); }
     }
 
     private async System.Threading.Tasks.Task WakeAsync()
@@ -600,7 +650,7 @@ public sealed class WebViewHost : UserControl
         WebView.Visibility = Visibility.Visible;
 
         if (!_webViewReady) return;
-        Navigate(_tab.Url);
+        if (WebView.CoreWebView2 is { IsSuspended: true } core) core.Resume();
 
         _tab.IsSleeping = false;
         await System.Threading.Tasks.Task.CompletedTask;

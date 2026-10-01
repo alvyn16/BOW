@@ -9,15 +9,15 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.System;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using BOW.Services;
 using BOW.UI.Security;
+using Microsoft.Web.WebView2.Core;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace BOW;
 
@@ -37,12 +37,19 @@ public sealed class MainWindow : Window
     private readonly Grid _addressOverlay;
     private readonly TextBox _addressBox;
     private readonly StackPanel _recentPages;
+    private readonly HistorySuggestions _historySuggestions;
     private readonly Button _zenExitButton;
-    private AppWindowPresenter? _presenterBeforeZen;
+    private AppWindowPresenter? _presenterBeforeFullScreen;
     private bool _isZenMode;
+    private WebViewHost? _webContentFullScreenHost;
     private bool _windowActivated;
     private SettingsView? _settingsView;
     private readonly Border _splitDivider;
+    private readonly Grid _tabDropOverlay;
+    private readonly Border _leftTabDropTarget;
+    private readonly Border _rightTabDropTarget;
+    private Guid? _draggedTabId;
+    private Guid? _focusedContentTabId;
     private readonly Dictionary<Guid, WebViewHost> _tabHosts = new();
     private readonly List<KeyboardAccelerator> _shortcutAccelerators = new();
     private readonly TabSleepService _sleepService;
@@ -100,6 +107,17 @@ public sealed class MainWindow : Window
 
         Grid.SetColumn(_contentGrid, 1);
         MainSplitView.Children.Add(_contentGrid);
+        _tabDropOverlay = new Grid { Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(125, 24, 24, 26)) };
+        _tabDropOverlay.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _tabDropOverlay.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _leftTabDropTarget = CreateTabSplitDropTarget(true);
+        _rightTabDropTarget = CreateTabSplitDropTarget(false);
+        Grid.SetColumn(_rightTabDropTarget, 1);
+        _tabDropOverlay.Children.Add(_leftTabDropTarget);
+        _tabDropOverlay.Children.Add(_rightTabDropTarget);
+        Grid.SetColumn(_tabDropOverlay, 1);
+        MainSplitView.Children.Add(_tabDropOverlay);
         RootGrid.Children.Add(_contentFrame);
 
         TabSwitcherView = new TabSwitcherView { Visibility = Visibility.Collapsed };
@@ -181,6 +199,12 @@ public sealed class MainWindow : Window
         searchRow.Children.Add(_addressBox);
         addressPanel.Children.Add(searchRow);
         _recentPages = new StackPanel { Padding = new Thickness(4, 4, 4, 8) };
+        _historySuggestions = new HistorySuggestions(_recentPages, 48, 32, 14, (entry, openTab) =>
+        {
+            HideAddressOverlay();
+            if (openTab is not null && Store.Tabs.Contains(openTab)) Store.SetActiveTab(openTab.Id);
+            else if (Store.ActiveTab is { } active) active.Url = entry.Url;
+        });
         _recentPages.SizeChanged += (_, _) =>
         {
             foreach (var child in _recentPages.Children.OfType<Button>())
@@ -198,7 +222,7 @@ public sealed class MainWindow : Window
         {
             if (_windowActivated) return;
             _windowActivated = true;
-            ApplyZenPresenter();
+            ApplyFullScreenPresenter();
         };
         WireStore();
         _sleepService = new TabSleepService(Store, SleepTabAsync);
@@ -266,6 +290,7 @@ public sealed class MainWindow : Window
             if (e.PropertyName == nameof(Store.ActiveTab))
                 DispatcherQueue.TryEnqueue(() =>
                 {
+                    _focusedContentTabId = Store.ActiveTab?.Id;
                     HideAddressOverlay();
                     NewTabPageView.HideRecentPages();
                     ShowBrowser();
@@ -291,7 +316,19 @@ public sealed class MainWindow : Window
         bool isNewTab = active.Url == "bow:newtab" || string.IsNullOrEmpty(active.Url);
         var partner = active.SplitPartnerId is Guid partnerId
             ? Store.Tabs.FirstOrDefault(t => t.Id == partnerId) : null;
-        bool isSplit = !isNewTab && active.IsSplitPartner && partner is not null;
+        if (_focusedContentTabId != active.Id && _focusedContentTabId != partner?.Id)
+            _focusedContentTabId = active.Id;
+        var fullScreenHost = _webContentFullScreenHost;
+        if (fullScreenHost is not null
+            && (!_tabHosts.TryGetValue(active.Id, out var activeHost) || activeHost != fullScreenHost)
+            && (partner is null || !_tabHosts.TryGetValue(partner.Id, out var splitHost)
+                || splitHost != fullScreenHost))
+        {
+            _webContentFullScreenHost = null;
+            _ = fullScreenHost.ExitFullScreenAsync();
+            fullScreenHost = null;
+        }
+        bool isSplit = fullScreenHost is null && !isNewTab && active.IsSplitPartner && partner is not null;
 
         NewTabPageView.Visibility = isNewTab ? Visibility.Visible : Visibility.Collapsed;
         foreach (var host in _tabHosts.Values) host.Visibility = Visibility.Collapsed;
@@ -299,7 +336,12 @@ public sealed class MainWindow : Window
         _contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _splitDivider.Visibility = isSplit ? Visibility.Visible : Visibility.Collapsed;
 
-        if (!isNewTab)
+        if (fullScreenHost is not null)
+        {
+            Grid.SetColumn(fullScreenHost, 0);
+            fullScreenHost.Visibility = Visibility.Visible;
+        }
+        else if (!isNewTab)
         {
             var host = GetOrCreateHost(active);
             Grid.SetColumn(host, 0);
@@ -316,16 +358,141 @@ public sealed class MainWindow : Window
         }
 
         UpdateZenMode(Store.Settings.ZenMode);
+        UpdateNavigationButtons();
     }
 
     private WebViewHost GetOrCreateHost(BowTab tab)
     {
         if (_tabHosts.TryGetValue(tab.Id, out var host)) return host;
         host = new WebViewHost { Visibility = Visibility.Collapsed };
+        host.WebView.GotFocus += (_, _) => FocusContentTab(tab.Id);
+        host.WebView.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler((_, _) => FocusContentTab(tab.Id)), true);
+        host.SleepPanel.PointerPressed += (_, _) => FocusContentTab(tab.Id);
+        host.FullScreenChanged += OnWebContentFullScreenChanged;
+        host.NavigationStateChanged += _ => UpdateNavigationButtons();
         host.SetTab(tab);
         _tabHosts.Add(tab.Id, host);
         _contentGrid.Children.Insert(0, host);
         return host;
+    }
+
+    public Guid? DraggedTabId => _draggedTabId;
+
+    public void BeginTabDrag(Guid tabId)
+    {
+        _draggedTabId = Store.Tabs.Any(tab => tab.Id == tabId) ? tabId : null;
+        if (_draggedTabId is Guid draggedId
+            && Store.Tabs.FirstOrDefault(tab => tab.Id == draggedId) is { } tab)
+        {
+            var title = string.IsNullOrWhiteSpace(tab.Title) ? tab.Url : tab.Title;
+            if (title.Length > 45) title = title[..42] + "...";
+            ((TextBlock)_leftTabDropTarget.Child).Text = $"{title} on left";
+            ((TextBlock)_rightTabDropTarget.Child).Text = $"{title} on right";
+        }
+        _tabDropOverlay.Visibility = _draggedTabId is Guid id
+            && Store.CanSplitWithTab(id) && MainSplitView.Visibility == Visibility.Visible
+            && _webContentFullScreenHost is null
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public void PreviewTabSplit(Guid tabId)
+    {
+        if (_draggedTabId != tabId || !Store.CanSplitWithTab(tabId)) return;
+        _tabDropOverlay.Visibility = Visibility.Visible;
+        _rightTabDropTarget.BorderBrush = UI.ThemeBrushes.AccentBrush;
+    }
+
+    public void ClearTabSplitPreview()
+    {
+        _rightTabDropTarget.BorderBrush =
+            new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+    }
+
+    public void SplitDraggedTab(bool placeOnLeft)
+    {
+        if (_draggedTabId is Guid id && Store.SplitWithTab(id, placeOnLeft))
+            RefreshContentArea();
+        EndTabDrag();
+    }
+
+    public void EndTabDrag()
+    {
+        _draggedTabId = null;
+        _tabDropOverlay.Visibility = Visibility.Collapsed;
+        foreach (var target in _tabDropOverlay.Children.OfType<Border>())
+            target.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+        ((TextBlock)_leftTabDropTarget.Child).Text = "Open on left";
+        ((TextBlock)_rightTabDropTarget.Child).Text = "Open on right";
+    }
+
+    private Border CreateTabSplitDropTarget(bool placeOnLeft)
+    {
+        var label = new TextBlock
+        {
+            Text = placeOnLeft ? "Open on left" : "Open on right",
+            FontFamily = UI.ThemeBrushes.UiFont, FontSize = 13,
+            Foreground = new SolidColorBrush(Colors.White),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 2, MaxWidth = 220,
+            Margin = new Thickness(12)
+        };
+        var target = new Border
+        {
+            Child = label, AllowDrop = true,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(45, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255)),
+            BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(7),
+            Margin = new Thickness(7)
+        };
+        target.DragOver += (_, args) =>
+        {
+            if (_draggedTabId is Guid id && Store.CanSplitWithTab(id)
+                && args.DataView.Contains(StandardDataFormats.Text))
+            {
+                args.AcceptedOperation = DataPackageOperation.Move;
+                target.BorderBrush = UI.ThemeBrushes.AccentBrush;
+            }
+            args.Handled = true;
+        };
+        target.DragLeave += (_, _) => target.BorderBrush =
+            new SolidColorBrush(Windows.UI.Color.FromArgb(120, 255, 255, 255));
+        target.Drop += (_, args) =>
+        {
+            if (_draggedTabId is Guid id && Store.CanSplitWithTab(id))
+            {
+                SplitDraggedTab(placeOnLeft);
+                args.AcceptedOperation = DataPackageOperation.Move;
+            }
+            else EndTabDrag();
+            args.Handled = true;
+        };
+        return target;
+    }
+
+    private void OnWebContentFullScreenChanged(WebViewHost host, bool containsFullScreenElement)
+    {
+        if (containsFullScreenElement)
+        {
+            if (host.Visibility != Visibility.Visible || MainSplitView.Visibility != Visibility.Visible) return;
+            if (_webContentFullScreenHost is { } previous && previous != host)
+                _ = previous.ExitFullScreenAsync();
+            _webContentFullScreenHost = host;
+            HideAddressOverlay();
+            NewTabPageView.HideRecentPages();
+            TabSwitcherView.Visibility = Visibility.Collapsed;
+        }
+        else if (_webContentFullScreenHost == host)
+        {
+            _webContentFullScreenHost = null;
+        }
+        else return;
+
+        RefreshContentArea();
     }
 
     public void RecoverTab(Guid id)
@@ -371,13 +538,74 @@ public sealed class MainWindow : Window
     private async Task<bool> SleepTabAsync(BowTab tab)
     {
         if (!_tabHosts.TryGetValue(tab.Id, out var host)) return true;
+        if (host.Visibility == Visibility.Visible || tab.IsLoading) return false;
         if (!await host.CanSleepAsync()) return false;
-        await host.SleepAsync();
-        if (tab == Store.ActiveTab) return false;
-        _contentGrid.Children.Remove(host);
-        _tabHosts.Remove(tab.Id);
-        host.Dispose();
-        return true;
+        if (tab == Store.ActiveTab || !Store.Tabs.Contains(tab)
+            || !_tabHosts.TryGetValue(tab.Id, out var currentHost) || currentHost != host)
+            return false;
+
+        if (await host.CaptureScrollAsync())
+        {
+            if (tab == Store.ActiveTab || !Store.Tabs.Contains(tab)
+                || !_tabHosts.TryGetValue(tab.Id, out currentHost) || currentHost != host)
+            {
+                tab.SavedScrollPosition = null;
+                return false;
+            }
+            _tabHosts.Remove(tab.Id);
+            _contentGrid.Children.Remove(host);
+            host.Dispose();
+            return true;
+        }
+
+        return tab != Store.ActiveTab && await host.SleepAsync();
+    }
+
+    public async Task SleepTabNowAsync(BowTab tab)
+    {
+        if (tab == Store.ActiveTab || tab.IsSleeping || !Store.Tabs.Contains(tab)) return;
+        if (await SleepTabAsync(tab) && tab != Store.ActiveTab && Store.Tabs.Contains(tab))
+            tab.IsSleeping = true;
+    }
+
+    public void ApplyTrackingProtection()
+    {
+        foreach (var host in _tabHosts.Values)
+            if (host.WebView.CoreWebView2 is { } core)
+                TrackingProtectionService.Apply(core, Store.Settings.TrackingProtectionLevel);
+    }
+
+    public async Task ClearWebViewDataAsync(CoreWebView2BrowsingDataKinds kinds, DateTime? since)
+    {
+        var core = _tabHosts.Values.Select(host => host.WebView.CoreWebView2)
+            .FirstOrDefault(value => value is not null);
+        Microsoft.UI.Xaml.Controls.WebView2? temporary = null;
+        try
+        {
+            if (core is null)
+            {
+                temporary = new Microsoft.UI.Xaml.Controls.WebView2
+                {
+                    Width = 1, Height = 1, Opacity = 0, IsHitTestVisible = false
+                };
+                RootGrid.Children.Add(temporary);
+                await temporary.EnsureCoreWebView2Async();
+                core = temporary.CoreWebView2;
+            }
+            if (core is null) throw new InvalidOperationException("Browser profile is unavailable.");
+            if (since is { } start)
+                await core.Profile.ClearBrowsingDataAsync(kinds, start, DateTime.UtcNow);
+            else
+                await core.Profile.ClearBrowsingDataAsync(kinds);
+        }
+        finally
+        {
+            if (temporary is not null)
+            {
+                RootGrid.Children.Remove(temporary);
+                temporary.Close();
+            }
+        }
     }
 
     public void UpdateZenMode(bool zenMode)
@@ -389,12 +617,14 @@ public sealed class MainWindow : Window
             HideAddressOverlay();
             ShowBrowser();
         }
-        TopBarRow.Height = zenMode ? new GridLength(0) : new GridLength(40);
-        TopBar.Visibility = zenMode ? Visibility.Collapsed : Visibility.Visible;
-        _zenExitButton.Visibility = zenMode ? Visibility.Visible : Visibility.Collapsed;
+        bool fullScreen = zenMode || _webContentFullScreenHost is not null;
+        TopBarRow.Height = fullScreen ? new GridLength(0) : new GridLength(40);
+        TopBar.Visibility = fullScreen ? Visibility.Collapsed : Visibility.Visible;
+        _zenExitButton.Visibility = zenMode && _webContentFullScreenHost is null
+            ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabLayout();
         SetWindowFrame(Store.Settings.ShowWindowFrame);
-        ApplyZenPresenter();
+        ApplyFullScreenPresenter();
     }
 
     public void SetZenMode(bool zenMode)
@@ -408,28 +638,28 @@ public sealed class MainWindow : Window
         TopBar.SyncZenMode(zenMode);
     }
 
-    private void ApplyZenPresenter()
+    private void ApplyFullScreenPresenter()
     {
         if (!_windowActivated || _appWindow is null) return;
-        if (_isZenMode)
+        if (_isZenMode || _webContentFullScreenHost is not null)
         {
             if (_appWindow.Presenter?.Kind == AppWindowPresenterKind.FullScreen) return;
-            _presenterBeforeZen = _appWindow.Presenter;
+            _presenterBeforeFullScreen = _appWindow.Presenter;
             _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
         }
         else if (_appWindow.Presenter?.Kind == AppWindowPresenterKind.FullScreen)
         {
-            if (_presenterBeforeZen is not null)
-                _appWindow.SetPresenter(_presenterBeforeZen);
+            if (_presenterBeforeFullScreen is not null)
+                _appWindow.SetPresenter(_presenterBeforeFullScreen);
             else
                 _appWindow.SetPresenter(AppWindowPresenterKind.Default);
-            _presenterBeforeZen = null;
+            _presenterBeforeFullScreen = null;
         }
     }
 
     public void SetWindowFrame(bool show)
     {
-        show &= !_isZenMode;
+        show &= !_isZenMode && _webContentFullScreenHost is null;
         _contentFrame.Margin = show ? new Thickness(8, 0, 8, 8) : new Thickness(0);
         _contentFrame.CornerRadius = show ? new CornerRadius(9) : new CornerRadius(0);
         _contentFrame.BorderThickness = show ? new Thickness(1) : new Thickness(0);
@@ -437,6 +667,7 @@ public sealed class MainWindow : Window
 
     public void ShowSettings(string? section = null)
     {
+        if (_webContentFullScreenHost is { } host) _ = host.ExitFullScreenAsync();
         if (_isZenMode) SetZenMode(false);
         HideAddressOverlay();
         if (_settingsView is null)
@@ -446,6 +677,7 @@ public sealed class MainWindow : Window
         }
         else if (section is null) _settingsView.RefreshCurrentSection();
         MainSplitView.Visibility = Visibility.Collapsed;
+        UpdateNavigationButtons();
         _settingsView.Visibility = Visibility.Visible;
         if (section is not null) _settingsView.SelectSection(section);
         TabSwitcherView.Visibility = Visibility.Collapsed;
@@ -456,6 +688,7 @@ public sealed class MainWindow : Window
     {
         if (_settingsView is not null) _settingsView.Visibility = Visibility.Collapsed;
         MainSplitView.Visibility = Visibility.Visible;
+        UpdateNavigationButtons();
     }
 
     public void RefreshVisibleSettings()
@@ -486,7 +719,8 @@ public sealed class MainWindow : Window
 
     public void ApplyTabLayout()
     {
-        bool sidebar = !_isZenMode && Store.Settings.TabLayout == "Sidebar";
+        bool sidebar = !_isZenMode && _webContentFullScreenHost is null
+            && Store.Settings.TabLayout == "Sidebar";
         SidebarView.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
         MainSplitView.ColumnDefinitions[0].Width = new GridLength(sidebar ? 220 : 0);
         TopBar.TabStrip.SetLayout(Store.Settings.TabLayout == "Sidebar");
@@ -506,79 +740,7 @@ public sealed class MainWindow : Window
 
     private void RefreshRecentPages()
     {
-        _recentPages.Children.Clear();
-        var query = _addressBox.Text.Trim();
-        var entries = HistoryService.Instance.Recent(200).Where(entry =>
-            query.Length == 0 || entry.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || entry.Url.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(5);
-
-        foreach (var entry in entries)
-        {
-            var openTab = Store.Tabs.FirstOrDefault(tab =>
-                string.Equals(tab.Url, entry.Url, StringComparison.OrdinalIgnoreCase));
-            var row = new Button
-            {
-                Height = 48,
-                Width = _recentPages.ActualWidth > 0 ? _recentPages.ActualWidth - 8 : double.NaN,
-                Padding = new Thickness(12, 0, 12, 0),
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Background = new SolidColorBrush(Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(5)
-            };
-            var layout = new Grid();
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            FrameworkElement icon = new FontIcon
-            {
-                FontFamily = new FontFamily("Segoe Fluent Icons"), Glyph = "\uE774",
-                FontSize = 15, Foreground = UI.ThemeBrushes.MutedTextBrush,
-                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center
-            };
-            if (Uri.TryCreate(entry.FaviconUrl, UriKind.Absolute, out var favicon)
-                && favicon.Scheme is "http" or "https")
-                icon = new Image
-                {
-                    Source = new BitmapImage(favicon), Width = 16, Height = 16,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            layout.Children.Add(icon);
-            var label = new TextBlock
-            {
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = UI.ThemeBrushes.TextBrush,
-                FontSize = 13
-            };
-            label.Inlines.Add(new Run { Text = entry.Title });
-            label.Inlines.Add(new Run { Text = $"  —  {new Uri(entry.Url).Host}", Foreground = UI.ThemeBrushes.MutedTextBrush });
-            Grid.SetColumn(label, 1);
-            layout.Children.Add(label);
-            if (openTab is not null)
-            {
-                var switchLabel = new TextBlock
-                {
-                    Text = "Switch to Tab  ↗", FontSize = 11,
-                    Foreground = UI.ThemeBrushes.MutedTextBrush,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(14, 0, 0, 0)
-                };
-                Grid.SetColumn(switchLabel, 2);
-                layout.Children.Add(switchLabel);
-            }
-            row.Content = layout;
-            AutomationProperties.SetName(row, $"{entry.Title}, {new Uri(entry.Url).Host}" +
-                (openTab is null ? string.Empty : ", switch to tab"));
-            row.Click += (_, _) =>
-            {
-                HideAddressOverlay();
-                if (openTab is not null) Store.SetActiveTab(openTab.Id);
-                else if (Store.ActiveTab is { } active) active.Url = entry.Url;
-            };
-            _recentPages.Children.Add(row);
-        }
+        _historySuggestions.Refresh(_addressBox.Text, Store);
     }
 
     private void AddressBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -629,8 +791,12 @@ public sealed class MainWindow : Window
     private Action? GetShortcutAction(string id) => id switch
     {
         "address" => () => TopBar.FocusOmnibar(),
+        "back" => GoBack,
+        "forward" => GoForward,
         "new-tab" => () => Store.AddTab("bow:newtab"),
-        "close-tab" => () => { if (Store.ActiveTab is { } tab) Store.CloseTab(tab.Id); },
+        "close-tab" => CloseFocusedTab,
+        "leave-split" => () => { if (Store.ActiveTab is { IsSplitPartner: true } tab) Store.JoinSplitTab(tab.Id); },
+        "full-screen" => ToggleMaximizeWindow,
         "reopen-tab" => () => Store.ReopenLastClosedTab(),
         "tab-switcher" => () => TabSwitcherView.Visibility = Visibility.Visible,
         "next-tab" => () => CycleTab(+1),
@@ -647,12 +813,83 @@ public sealed class MainWindow : Window
     {
         if (_addressOverlay.Visibility == Visibility.Visible)
             HideAddressOverlay();
+        else if (_webContentFullScreenHost is { } host)
+            _ = host.ExitFullScreenAsync();
         else if (_isZenMode)
             SetZenMode(false);
         else if (TabSwitcherView.Visibility == Visibility.Visible)
             TabSwitcherView.Visibility = Visibility.Collapsed;
         else if (_settingsView?.Visibility == Visibility.Visible)
             ShowBrowser();
+    }
+
+    private void CloseFocusedTab()
+    {
+        if (GetFocusedContentTab() is { } tab) Store.CloseTab(tab.Id);
+    }
+
+    private BowTab? GetFocusedContentTab()
+    {
+        var active = Store.ActiveTab;
+        if (active?.IsSplitPartner != true || active.SplitPartnerId != _focusedContentTabId)
+            return active;
+        return Store.Tabs.FirstOrDefault(tab => tab.Id == _focusedContentTabId) ?? active;
+    }
+
+    private void FocusContentTab(Guid id)
+    {
+        _focusedContentTabId = id;
+        UpdateNavigationButtons();
+    }
+
+    private WebViewHost? GetNavigationHost()
+    {
+        if (MainSplitView.Visibility != Visibility.Visible || GetFocusedContentTab() is not { } tab
+            || string.IsNullOrEmpty(tab.Url) || tab.Url == "bow:newtab"
+            || !_tabHosts.TryGetValue(tab.Id, out var host) || host.Visibility != Visibility.Visible)
+            return null;
+        return host;
+    }
+
+    private void UpdateNavigationButtons()
+    {
+        var core = GetNavigationHost()?.WebView.CoreWebView2;
+        TopBar.TabStrip.SetNavigationState(core?.CanGoBack == true,
+            core?.CanGoForward == true, core is not null);
+    }
+
+    public void GoBack() => NavigateHistory(true);
+
+    public void GoForward() => NavigateHistory(false);
+
+    public void ReloadFocusedTab() => GetNavigationHost()?.WebView.CoreWebView2?.Reload();
+
+    private void NavigateHistory(bool back)
+    {
+        var core = GetNavigationHost()?.WebView.CoreWebView2;
+        if (back && core?.CanGoBack == true) core.GoBack();
+        else if (!back && core?.CanGoForward == true) core.GoForward();
+    }
+
+    private void ToggleMaximizeWindow()
+    {
+        if (_webContentFullScreenHost is { } host)
+        {
+            _ = host.ExitFullScreenAsync();
+            return;
+        }
+        if (_isZenMode)
+        {
+            SetZenMode(false);
+            if (_appWindow?.Presenter is OverlappedPresenter restoredPresenter)
+                restoredPresenter.Maximize();
+            return;
+        }
+        if (_appWindow?.Presenter is not OverlappedPresenter presenter) return;
+        if (presenter.State == OverlappedPresenterState.Maximized)
+            presenter.Restore();
+        else
+            presenter.Maximize();
     }
 
     private void AddKeyAccel(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers mod, System.Action action)

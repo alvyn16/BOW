@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using System.Reflection;
 using System.Collections.Generic;
+using Microsoft.Web.WebView2.Core;
 
 namespace BOW.UI.Settings;
 
@@ -83,7 +84,7 @@ public sealed class SettingsView : UserControl
             ("\uE76E", "Appearance", BuildAppearanceSection),
             ("\uE721", "Search", BuildSearchSection),
             ("\uE943", "Tabs", BuildTabsSection),
-            ("\uE72E", "Browsing", BuildBrowsingSection),
+            ("\uE72E", "Privacy & browsing", BuildBrowsingSection),
             ("\uE8D7", "Site permissions", BuildSitePermissionsSection),
             ("\uE765", "Keyboard shortcuts", BuildShortcutsSection),
             ("\uE946", "Downloads", BuildDownloadsSection),
@@ -324,14 +325,14 @@ public sealed class SettingsView : UserControl
         panel.Children.Add(MakeSectionLabel("TAB SLEEP TIMER"));
         var sleepSlider = new Slider
         {
-            Minimum = 1, Maximum = 60,
+            Minimum = 0, Maximum = 60,
             Value = _store.Settings.TabSleepMinutes,
             StepFrequency = 1, Width = 260,
             Margin = new Thickness(0, 4, 0, 4)
         };
         var sleepLabel = new TextBlock
         {
-            Text = $"{_store.Settings.TabSleepMinutes} minutes",
+            Text = SleepIntervalLabel(_store.Settings.TabSleepMinutes),
             FontSize = 12,
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136))
         };
@@ -339,18 +340,92 @@ public sealed class SettingsView : UserControl
         {
             var val = (int)e.NewValue;
             _store.Settings.TabSleepMinutes = val;
-            sleepLabel.Text = $"{val} minutes";
+            sleepLabel.Text = SleepIntervalLabel(val);
             Save();
         };
         panel.Children.Add(sleepSlider);
         panel.Children.Add(sleepLabel);
 
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Inactive tabs can be unloaded or suspended to free memory. Playing media and active tabs stay awake.",
+            FontSize = 10, Foreground = ThemeBrushes.MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8)
+        });
+        panel.Children.Add(MakeSectionLabel("NEVER SLEEP THESE SITES"));
+        var exceptions = new StackPanel { Spacing = 4 };
+        void RefreshExceptions()
+        {
+            exceptions.Children.Clear();
+            foreach (var host in (_store.Settings.TabSleepExcludedHosts ?? []).OrderBy(value => value))
+            {
+                var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.Children.Add(new TextBlock
+                {
+                    Text = host, FontSize = 12, Foreground = ThemeBrushes.TextBrush,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                var remove = new Button { Content = "Remove", FontSize = 11 };
+                remove.Click += (_, _) =>
+                {
+                    _store.Settings.TabSleepExcludedHosts?.Remove(host);
+                    Save();
+                    RefreshExceptions();
+                };
+                Grid.SetColumn(remove, 1);
+                row.Children.Add(remove);
+                exceptions.Children.Add(row);
+            }
+            if (exceptions.Children.Count == 0)
+                exceptions.Children.Add(new TextBlock
+                {
+                    Text = "No site exceptions", FontSize = 11,
+                    Foreground = ThemeBrushes.MutedTextBrush
+                });
+        }
+        RefreshExceptions();
+        panel.Children.Add(exceptions);
+        var addRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
+            Margin = new Thickness(0, 9, 0, 0) };
+        var hostInput = new TextBox { PlaceholderText = "example.com", Width = 220, FontSize = 11 };
+        var add = new Button { Content = "Add site", FontSize = 11 };
+        var exceptionStatus = new TextBlock { FontSize = 10, Foreground = ThemeBrushes.MutedTextBrush };
+        add.Click += (_, _) =>
+        {
+            var input = hostInput.Text.Trim();
+            var candidate = input.Contains("://", StringComparison.Ordinal)
+                ? input : "https://" + input;
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+                || uri.Scheme is not ("http" or "https")
+                || string.IsNullOrWhiteSpace(uri.Host))
+            {
+                exceptionStatus.Text = "Enter a valid website host.";
+                return;
+            }
+            _store.Settings.TabSleepExcludedHosts ??= [];
+            if (!_store.Settings.TabSleepExcludedHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
+                _store.Settings.TabSleepExcludedHosts.Add(uri.Host);
+            Save();
+            hostInput.Text = "";
+            exceptionStatus.Text = "";
+            RefreshExceptions();
+        };
+        addRow.Children.Add(hostInput);
+        addRow.Children.Add(add);
+        panel.Children.Add(addRow);
+        panel.Children.Add(exceptionStatus);
+
         return panel;
     }
 
+    private static string SleepIntervalLabel(int minutes) => minutes == 0
+        ? "Off" : minutes == 1 ? "1 minute" : $"{minutes} minutes";
+
     private UIElement BuildBrowsingSection()
     {
-        var panel = MakeSectionPanel("Browsing");
+        var panel = MakeSectionPanel("Privacy & browsing");
         panel.Children.Add(MakeSectionLabel("RENDERING ENGINE"));
         var engine = new StackPanel { Spacing = 3 };
         engine.Children.Add(new TextBlock
@@ -385,6 +460,116 @@ public sealed class SettingsView : UserControl
             "Fluid momentum physics for page navigation.",
             _store.Settings.SmoothScrolling,
             v => { _store.Settings.SmoothScrolling = v; Save(); }));
+        panel.Children.Add(MakeSectionLabel("TRACKING PROTECTION"));
+        var trackingLevels = new[] { "Off", "Basic", "Balanced", "Strict" };
+        var selectedLevel = Array.IndexOf(trackingLevels, _store.Settings.TrackingProtectionLevel);
+        var trackingStatus = new TextBlock
+        {
+            FontSize = 10, Foreground = ThemeBrushes.MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap
+        };
+        panel.Children.Add(MakeSegmentedControl(trackingLevels,
+            selectedLevel < 0 ? 2 : selectedLevel, index =>
+            {
+                _store.Settings.TrackingProtectionLevel = trackingLevels[index];
+                Save();
+                try
+                {
+                    App.MainWindow?.ApplyTrackingProtection();
+                    trackingStatus.Text = "";
+                }
+                catch (Exception ex)
+                {
+                    trackingStatus.Text = $"Could not apply this level to open tabs: {ex.Message}";
+                }
+            }));
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Basic blocks fewer trackers, Balanced is the default, and Strict blocks more but may affect some sites. Off disables WebView2 tracking prevention.",
+            FontSize = 10, Foreground = ThemeBrushes.MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8)
+        });
+        panel.Children.Add(trackingStatus);
+        panel.Children.Add(MakeSectionLabel("CLEAR BROWSING DATA"));
+        var timeRange = new ComboBox { Width = 220,
+            Margin = new Thickness(0, 4, 0, 10) };
+        foreach (var label in new[] { "Last hour", "Last 24 hours", "Last 7 days", "Last 4 weeks", "All time" })
+            timeRange.Items.Add(label);
+        timeRange.SelectedIndex = 4;
+        panel.Children.Add(timeRange);
+        var history = new CheckBox { Content = "Browsing history", IsChecked = true };
+        var siteData = new CheckBox { Content = "Cookies and site data", IsChecked = true };
+        var cache = new CheckBox { Content = "Cached images and files", IsChecked = true };
+        var downloads = new CheckBox { Content = "Download history", IsChecked = false };
+        foreach (var option in new[] { history, siteData, cache, downloads })
+            panel.Children.Add(option);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Clearing site data may sign you out. Download history removes records, not files on disk. Saved passwords and autofill are not cleared.",
+            FontSize = 10, Foreground = ThemeBrushes.MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 8)
+        });
+        var clearData = new Button { Content = "Clear selected data", Margin = new Thickness(0, 8, 0, 0) };
+        var clearStatus = new TextBlock
+        {
+            FontFamily = ThemeBrushes.UiFont,
+            FontSize = 11,
+            Foreground = ThemeBrushes.MutedTextBrush,
+            Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap
+        };
+        clearData.Click += async (_, _) =>
+        {
+            var kinds = (CoreWebView2BrowsingDataKinds)0;
+            if (history.IsChecked == true) kinds |= CoreWebView2BrowsingDataKinds.BrowsingHistory;
+            if (siteData.IsChecked == true) kinds |= CoreWebView2BrowsingDataKinds.AllSite
+                | CoreWebView2BrowsingDataKinds.ServiceWorkers;
+            if (cache.IsChecked == true) kinds |= CoreWebView2BrowsingDataKinds.DiskCache;
+            if (downloads.IsChecked == true) kinds |= CoreWebView2BrowsingDataKinds.DownloadHistory;
+            if (kinds == 0)
+            {
+                clearStatus.Text = "Choose at least one type of data.";
+                return;
+            }
+            if (XamlRoot is null || App.MainWindow is not { } window) return;
+            var confirmation = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Clear selected browsing data?",
+                Content = "This removes the selected data from BOW and its browser profile for the chosen time range. Open pages may need a reload to reflect the change.",
+                PrimaryButtonText = "Clear data",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
+            var since = timeRange.SelectedIndex switch
+            {
+                0 => DateTimeOffset.UtcNow.AddHours(-1),
+                1 => DateTimeOffset.UtcNow.AddDays(-1),
+                2 => DateTimeOffset.UtcNow.AddDays(-7),
+                3 => DateTimeOffset.UtcNow.AddDays(-28),
+                _ => (DateTimeOffset?)null
+            };
+            clearData.IsEnabled = false;
+            clearStatus.Text = "Clearing data…";
+            try
+            {
+                await window.ClearWebViewDataAsync(kinds, since?.UtcDateTime);
+                if (history.IsChecked == true)
+                {
+                    HistoryService.Instance.ClearSince(since);
+                    _store.ClearRecentlyClosedSince(since);
+                }
+                if (downloads.IsChecked == true) DownloadService.Instance.ClearHistorySince(since);
+                clearStatus.Text = "Selected browsing data cleared.";
+            }
+            catch (Exception ex)
+            {
+                clearStatus.Text = $"Could not finish clearing data: {ex.Message}";
+            }
+            finally { clearData.IsEnabled = true; }
+        };
+        panel.Children.Add(clearData);
+        panel.Children.Add(clearStatus);
         return panel;
     }
 
@@ -475,7 +660,7 @@ public sealed class SettingsView : UserControl
         };
         var keys = Enumerable.Range('A', 26).Select(code => ((char)code).ToString())
             .Concat(Enumerable.Range(0, 10).Select(number => number.ToString()))
-            .Concat(["Tab", "Plus", "Minus", "Escape"])
+            .Concat(["Tab", "Left", "Right", "Plus", "Minus", "Escape"])
             .Concat(Enumerable.Range(1, 12).Select(number => $"F{number}"))
             .ToArray();
         var key = new ComboBox
@@ -608,7 +793,7 @@ public sealed class SettingsView : UserControl
         });
         var description = title switch
         {
-            "Browsing" => "Scrolling and page behavior",
+            "Privacy & browsing" => "Control tracking and stored browsing data",
             "Appearance" => "Choose how BOW looks and feels",
             "General" => "Startup and file preferences",
             "Search" => "Search from the address bar",

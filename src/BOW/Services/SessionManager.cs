@@ -28,7 +28,7 @@ public static class SessionManager
         {
             var entries = tabs
                 .Where(t => !string.IsNullOrEmpty(t.Url))
-                .Select(t => new SessionEntry(t.Url, t.IsPinned, t.Id == activeTabId,
+                .Select(t => new SessionEntry(PersistedUrl.Sanitize(t.Url), t.IsPinned, t.Id == activeTabId,
                     t.GroupName, t.IsMuted))
                 .ToList();
 
@@ -53,7 +53,19 @@ public static class SessionManager
                 return [];
 
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<List<SessionEntry>>(json) ?? [];
+            var entries = JsonSerializer.Deserialize<List<SessionEntry>>(json) ?? [];
+            var sanitized = entries.Select(entry => entry with { Url = PersistedUrl.Sanitize(entry.Url) }).ToList();
+            if (!entries.SequenceEqual(sanitized))
+            {
+                try
+                {
+                    var tmp = path + ".tmp";
+                    File.WriteAllText(tmp, JsonSerializer.Serialize(sanitized, _jsonOptions));
+                    File.Move(tmp, path, overwrite: true);
+                }
+                catch { /* still restore sanitized tabs if migration cannot be written */ }
+            }
+            return sanitized;
         }
         catch
         {
