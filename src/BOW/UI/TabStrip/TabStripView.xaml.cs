@@ -228,6 +228,7 @@ public sealed class TabStripView : UserControl
     private TabItemView CreateTabView(BowTab tab)
     {
         var view = new TabItemView { DataContext = new TabItemViewModel(tab) };
+        AutomationProperties.SetAutomationId(view, "Tab-" + tab.Id);
         var gesture = new TabDragGesture(view);
         view.Tapped += (_, _) =>
         {

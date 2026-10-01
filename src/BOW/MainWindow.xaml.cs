@@ -52,6 +52,8 @@ public sealed class MainWindow : Window
     private Guid? _focusedContentTabId;
     private readonly Dictionary<Guid, WebViewHost> _tabHosts = new();
     private readonly List<KeyboardAccelerator> _shortcutAccelerators = new();
+    private readonly Dictionary<KeyboardAccelerator, Action> _shortcutActions = new();
+    private WindowShortcutHook? _shortcutHook;
     private readonly TabSleepService _sleepService;
     public NewTabPage NewTabPageView { get; }
     public TabSwitcherView TabSwitcherView { get; }
@@ -379,6 +381,48 @@ public sealed class MainWindow : Window
 
     internal Microsoft.Web.WebView2.Core.CoreWebView2? BenchmarkCore(Guid id) =>
         _tabHosts.TryGetValue(id, out var host) ? host.WebView.CoreWebView2 : null;
+
+    internal void StartInteractionSnapshots(string path)
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        timer.Tick += (_, _) =>
+        {
+            var panes = _tabHosts.Select(pair =>
+            {
+                var host = pair.Value;
+                var point = host.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, 0));
+                return new { id = pair.Key, x = point.X, y = point.Y, width = host.ActualWidth,
+                    height = host.ActualHeight, visible = host.Visibility == Visibility.Visible };
+            }).ToArray();
+            var json = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                tabs = Store.Tabs.Select(t => new { id = t.Id, title = t.Title, split = t.IsSplitPartner }),
+                panes, activeTab = Store.ActiveTab?.Id, focusedTab = _focusedContentTabId,
+                chromeVisible = TopBar.Visibility == Visibility.Visible,
+                presenter = _appWindow?.Presenter.Kind.ToString(),
+                windowWidth = _appWindow?.Size.Width
+            });
+            File.WriteAllText(path + ".tmp", json);
+            File.Move(path + ".tmp", path, overwrite: true);
+        };
+        Closed += (_, _) => timer.Stop();
+        timer.Start();
+    }
+
+    internal void ShowUpdateAvailable(ReleaseUpdate update)
+    {
+        var notice = new InfoBar
+        {
+            Title = "BOW update available", Message = "Version " + update.AvailableVersion,
+            Severity = InfoBarSeverity.Informational, IsOpen = true, IsClosable = true,
+            MaxWidth = 440, Margin = new Thickness(16),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+            ActionButton = new HyperlinkButton { Content = "View release", NavigateUri = update.ReleasePage }
+        };
+        Grid.SetRow(notice, 1);
+        notice.Closed += (_, _) => RootGrid.Children.Remove(notice);
+        RootGrid.Children.Add(notice);
+    }
 
     public Guid? DraggedTabId => _draggedTabId;
 
@@ -768,9 +812,23 @@ public sealed class MainWindow : Window
 
     public void RegisterKeyboardShortcuts()
     {
+        if (_shortcutHook is null)
+        {
+            _shortcutHook = new WindowShortcutHook(WinRT.Interop.WindowNative.GetWindowHandle(this), (key, modifiers, repeat) =>
+            {
+                // XAML handles dialogs and editable controls; bridge only native page focus.
+                if (FocusManager.GetFocusedElement(RootGrid.XamlRoot) is not Microsoft.UI.Xaml.Controls.WebView2) return false;
+                var shortcut = _shortcutAccelerators.FirstOrDefault(a => a.Key == key && a.Modifiers == modifiers);
+                if (shortcut is null) return false;
+                if (!repeat && _shortcutActions.TryGetValue(shortcut, out var action)) DispatcherQueue.TryEnqueue(() => action());
+                return true;
+            });
+            Closed += (_, _) => _shortcutHook.Dispose();
+        }
         foreach (var accelerator in _shortcutAccelerators)
             RootGrid.KeyboardAccelerators.Remove(accelerator);
         _shortcutAccelerators.Clear();
+        _shortcutActions.Clear();
 
         foreach (var command in ShortcutCatalog.Commands)
         {
@@ -901,6 +959,7 @@ public sealed class MainWindow : Window
         accel.Invoked += (_, e) => { e.Handled = true; action(); };
         RootGrid.KeyboardAccelerators.Add(accel);
         _shortcutAccelerators.Add(accel);
+        _shortcutActions.Add(accel, action);
     }
 
     private void CycleTab(int delta)
