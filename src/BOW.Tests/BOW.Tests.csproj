@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
@@ -15,6 +15,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
   </ItemGroup>
 
   <!-- Reference only the non-WinUI source files via shared compile -->
@@ -27,6 +28,7 @@
     <Compile Include="..\BOW\Services\SettingsService.cs" Link="Services\SettingsService.cs" />
     <Compile Include="..\BOW\Services\SessionManager.cs" Link="Services\SessionManager.cs" />
     <Compile Include="..\BOW\Services\BrowserData.cs" Link="Services\BrowserData.cs" />
+    <Compile Include="..\BOW\Services\ReleaseUpdateService.cs" Link="Services\ReleaseUpdateService.cs" />
     <Compile Include="..\BOW\Services\SessionAutoSaver.cs" Link="Services\SessionAutoSaver.cs" />
     <Compile Include="..\BOW\Services\SearchService.cs" Link="Services\SearchService.cs" />
     <Compile Include="..\BOW\Services\HistoryService.cs" Link="Services\HistoryService.cs" />
