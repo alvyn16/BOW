@@ -42,24 +42,18 @@ jobs:
             throw "Tag must match the project version: v$version"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Download and verify bundled WebView2 installer
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+          ./scripts/Get-WebView2Installer.ps1 -Destination $installer
+          "BOW_TEST_INSTALLER=$installer" >> $env:GITHUB_ENV
       - name: Run unit tests
         run: |
           dotnet test src/BOW.Tests/BOW.Tests.csproj -c Release --logger "trx;LogFileName=unit.trx" --results-directory TestResults --nologo
           if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed.' }
       - name: Build portable release
-        run: ./scripts/Build-Release.ps1
-      - name: Ensure WebView2 runtime is installed
-        run: |
-          $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
-          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer
-          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
-            throw 'WebView2 installer signature could not be verified.'
-          }
-          $install = Start-Process $installer -ArgumentList '/silent', '/install' -PassThru -WindowStyle Hidden
-          if (-not $install.WaitForExit(180000)) { Stop-Process -Id $install.Id -Force; throw 'WebView2 install timed out.' }
-          if ($install.ExitCode -ne 0) { throw "WebView2 installation failed: $($install.ExitCode)" }
-      - name: Check startup from the extracted release
+        run: ./scripts/Build-Release.ps1 -RuntimeInstallerPath $env:BOW_TEST_INSTALLER
+      - name: Install bundled WebView2 through BOW
         run: |
           $archives = @(Get-ChildItem dist -Filter '*.zip')
           if ($archives.Count -ne 1) { throw 'Expected exactly one release ZIP.' }
@@ -68,7 +62,13 @@ jobs:
           Expand-Archive -LiteralPath $archive.FullName -DestinationPath $extract
           $executables = @(Get-ChildItem $extract -Recurse -Filter BOW.exe)
           if ($executables.Count -ne 1) { throw 'Expected exactly one BOW.exe in the release.' }
-          ./scripts/Test-Startup.ps1 -Executable $executables[0].FullName -ReportDirectory TestResults/startup
+          $exe = $executables[0].FullName
+          $install = Start-Process $exe -ArgumentList '--install-webview2' -PassThru -WindowStyle Hidden
+          if (-not $install.WaitForExit(240000)) { Stop-Process -Id $install.Id -Force; throw 'WebView2 setup timed out.' }
+          if ($install.ExitCode -ne 0) { throw "BOW WebView2 setup failed: $($install.ExitCode)" }
+          "BOW_RELEASE_EXE=$exe" >> $env:GITHUB_ENV
+      - name: Check startup from the extracted release
+        run: ./scripts/Test-Startup.ps1 -Executable $env:BOW_RELEASE_EXE -ReportDirectory TestResults/startup
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -22,6 +22,7 @@ public sealed class WebViewHost : UserControl
     private readonly TextBlock _errorTitle;
     private readonly TextBlock _errorDescription;
     private readonly HyperlinkButton _runtimeLink;
+    private readonly Button _runtimeInstallButton;
     private readonly Button _retryButton;
     private readonly Button _waitButton;
 
@@ -47,6 +48,12 @@ public sealed class WebViewHost : UserControl
         _errorTitle = new TextBlock { FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center };
         _errorDescription = new TextBlock { FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, Opacity = 0.6, TextWrapping = TextWrapping.Wrap, MaxWidth = 500 };
         _runtimeLink = new HyperlinkButton { Content = "Download WebView2 runtime", NavigateUri = new System.Uri("https://aka.ms/webview2"), HorizontalAlignment = HorizontalAlignment.Center };
+        _runtimeInstallButton = new Button
+        {
+            Content = "Install WebView2", FontFamily = ThemeBrushes.UiFont,
+            HorizontalAlignment = HorizontalAlignment.Center, Visibility = Visibility.Collapsed
+        };
+        _runtimeInstallButton.Click += OnRuntimeInstallClicked;
         _retryButton = new Button
         {
             Content = "Try again",
@@ -84,6 +91,7 @@ public sealed class WebViewHost : UserControl
         errStack.Children.Add(_errorTitle);
         errStack.Children.Add(_errorDescription);
         errStack.Children.Add(_runtimeLink);
+        errStack.Children.Add(_runtimeInstallButton);
         errStack.Children.Add(_retryButton);
         errStack.Children.Add(_waitButton);
         WebViewErrorPanel.Children.Add(errStack);
@@ -106,6 +114,27 @@ public sealed class WebViewHost : UserControl
         WebView.CoreWebView2Initialized += (_, args) => _initializationException = args.Exception;
         WebView.Loaded += OnLoaded;
         SleepPanel.PointerPressed += (_, _) => _ = WakeAsync();
+    }
+
+    private async void OnRuntimeInstallClicked(object sender, RoutedEventArgs e)
+    {
+        _runtimeInstallButton.IsEnabled = false;
+        _retryButton.IsEnabled = false;
+        _errorDescription.Text = "Installing Microsoft's WebView2 runtime...";
+        try
+        {
+            await WebViewRuntimeInstaller.InstallAsync();
+            if (!_disposed && _tab is not null) App.MainWindow?.RecoverTab(_tab.Id);
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed) _errorDescription.Text = ex.Message;
+        }
+        finally
+        {
+            _runtimeInstallButton.IsEnabled = true;
+            _retryButton.IsEnabled = true;
+        }
     }
 
     public void SetTab(BowTab tab)
@@ -216,7 +245,9 @@ public sealed class WebViewHost : UserControl
             _errorDescription.Text = runtimeMissing
                 ? "BOW requires the WebView2 Evergreen runtime."
                 : $"The browser engine failed to initialize (0x{ex.HResult:X8}). Try again after the browser process has stopped.";
-            _runtimeLink.Visibility = runtimeMissing ? Visibility.Visible : Visibility.Collapsed;
+            var bundledInstaller = runtimeMissing && File.Exists(WebViewRuntimeInstaller.InstallerPath);
+            _runtimeInstallButton.Visibility = bundledInstaller ? Visibility.Visible : Visibility.Collapsed;
+            _runtimeLink.Visibility = runtimeMissing && !bundledInstaller ? Visibility.Visible : Visibility.Collapsed;
             _needsRecovery = true;
             _retryButton.Content = "Try again";
             _retryButton.Visibility = Visibility.Visible;
