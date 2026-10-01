@@ -47,6 +47,7 @@ public sealed class SettingsView : UserControl
             Margin = new Thickness(0, 0, 0, 10)
         };
         backButton.Click += (_, _) => App.MainWindow?.ShowBrowser();
+        AutomationProperties.SetAutomationId(backButton, "BackToBrowser");
         pane.Children.Add(backButton);
         pane.Children.Add(new TextBlock
         {
@@ -128,6 +129,7 @@ public sealed class SettingsView : UserControl
                 BorderThickness = new Thickness(0)
             };
             var index = i;
+            AutomationProperties.SetName(button, label);
             button.Click += (_, _) => ShowSection(index);
             _navButtons.Add(button);
             pane.Children.Add(button);
@@ -762,14 +764,7 @@ public sealed class SettingsView : UserControl
     private UIElement BuildAboutSection()
     {
         var panel = MakeSectionPanel("About BOW");
-        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.1.0";
-        panel.Children.Add(new TextBlock
-        {
-            Text = $"Version {version}",
-            FontSize = 13,
-            Margin = new Thickness(0, 0, 0, 8),
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 136, 136, 136))
-        });
+        panel.Children.Add(new UpdateSettingsPanel(_store.Settings));
         panel.Children.Add(new HyperlinkButton
         {
             Content = "Inspired by Lean Browser",

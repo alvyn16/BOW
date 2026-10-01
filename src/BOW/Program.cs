@@ -20,6 +20,13 @@ public static class Program
             Services.BrowserData.DirectoryPath = profile;
             Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", System.IO.Path.Combine(profile, "webview"));
         }
+        if (args.Length == 2 && args[0] == "--ui-test-profile")
+        {
+            Services.BrowserData.DirectoryPath = System.IO.Path.GetFullPath(args[1]);
+            Services.BrowserData.InteractionSnapshotPath = Services.BrowserData.FilePath("ui-state.json");
+            Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER",
+                Services.BrowserData.FilePath("webview"));
+        }
         if (args.Length == 1 && args[0] == "--install-webview2")
         {
             try

@@ -5,6 +5,9 @@ namespace BOW.Core;
 /// </summary>
 public class SettingsModel
 {
+    public string UpdateChannel { get; set; } = "Stable";
+    public bool CheckUpdatesOnStartup { get; set; } = false;
+    public DateTimeOffset? LastUpdateCheck { get; set; }
     /// <summary>"Auto" | "Light" | "Dark"</summary>
     public string Theme { get; set; } = "Auto";
 

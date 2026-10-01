@@ -4,12 +4,19 @@ using System.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.Web.WebView2.Core;
 
 namespace BOW.UI.WebView;
 
 public sealed class WebViewHost : UserControl
 {
+    protected override AutomationPeer OnCreateAutomationPeer() => new PanePeer(this);
+    private sealed class PanePeer(WebViewHost owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Group;
+    }
     private static readonly SemaphoreSlim SecurityDialogGate = new(1, 1);
     private BowTab? _tab;
     private bool _webViewReady;
@@ -143,6 +150,8 @@ public sealed class WebViewHost : UserControl
             _tab.PropertyChanged -= OnTabPropertyChanged;
 
         _tab = tab;
+        AutomationProperties.SetAutomationId(this, "BrowserPane-" + tab.Id);
+        AutomationProperties.SetName(this, "Browser pane: " + tab.Title);
         _tab.PropertyChanged += OnTabPropertyChanged;
         if (_webViewReady && WebView.CoreWebView2 is { } core)
             core.IsMuted = tab.IsMuted;
@@ -171,6 +180,9 @@ public sealed class WebViewHost : UserControl
             if (_tab is null) return;
             switch (e.PropertyName)
             {
+                case nameof(BowTab.Title):
+                    AutomationProperties.SetName(this, "Browser pane: " + _tab.Title);
+                    break;
                 case nameof(BowTab.Url) when _webViewReady:
                     if (WebView.CoreWebView2.Source != _tab.Url) Navigate(_tab.Url);
                     break;

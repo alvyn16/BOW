@@ -31,7 +31,11 @@ public static class MicrosoftInstallerTrust
             var status = WinVerifyTrust(IntPtr.Zero, ref action, ref data);
             if (status != 0)
                 throw new CryptographicException($"The WebView2 installer signature is not trusted (0x{status:X8}).");
-            using var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
+            // .NET has no non-obsolete Authenticode PE extraction API; trust was verified above.
+#pragma warning disable SYSLIB0057
+            using var signedCertificate = X509Certificate.CreateFromSignedFile(path);
+#pragma warning restore SYSLIB0057
+            using var certificate = X509CertificateLoader.LoadCertificate(signedCertificate.GetRawCertData());
             if (certificate.GetNameInfo(X509NameType.SimpleName, false) != "Microsoft Corporation")
                 throw new CryptographicException("The WebView2 installer was not signed by Microsoft.");
         }

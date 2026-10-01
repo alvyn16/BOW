@@ -14,6 +14,7 @@ public partial class App : Application
     private readonly string? _smokeTestReport;
     private readonly string? _benchmarkReport;
     private readonly System.Diagnostics.Stopwatch? _started;
+    private bool _mainWindowClosed;
 
     public static BowStore Store { get; private set; } = null!;
     public static MainWindow? MainWindow { get; private set; }
@@ -45,12 +46,34 @@ public partial class App : Application
         _mainWindow.Closed += OnMainWindowClosed;
         ApplyTheme(_mainWindow, Store.Settings.Theme);
         _mainWindow.Activate();
+        if (BrowserData.InteractionSnapshotPath is { } snapshotPath)
+            _mainWindow.StartInteractionSnapshots(snapshotPath);
         if (_benchmarkReport is not null)
             _ = PerformanceBenchmark.RunAsync(this, _mainWindow, _benchmarkReport, _started!);
+        else
+            _ = CheckStartupUpdateAsync();
+    }
+
+    private async Task CheckStartupUpdateAsync()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!Store.Settings.CheckUpdatesOnStartup ||
+            Store.Settings.LastUpdateCheck is { } checkedAt && checkedAt <= now && now - checkedAt < TimeSpan.FromDays(1)) return;
+        try
+        {
+            Store.Settings.LastUpdateCheck = DateTimeOffset.UtcNow;
+            SettingsService.Save(Store.Settings);
+            var result = await new ReleaseUpdateService().CheckAsync(ReleaseUpdateService.InstalledVersion,
+                Store.Settings.UpdateChannel == "Preview" ? "Preview" : "Stable");
+            if (result.IsNewer && !_mainWindowClosed && _mainWindow is not null) _mainWindow.ShowUpdateAvailable(result);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+        { System.Diagnostics.Debug.WriteLine("Background update check did not complete."); }
     }
 
     private void OnMainWindowClosed(object sender, WindowEventArgs args)
     {
+        _mainWindowClosed = true;
         _sessionAutoSaver?.Dispose();
         SettingsService.Save(Store.Settings);
     }

@@ -64,6 +64,7 @@ internal sealed class TabDragGesture
     {
         if (_pointerId != e.Pointer.PointerId) return;
         _pointerId = null;
-        _element.ReleasePointerCapture(e.Pointer);
+        // Let Button process release and Click before releasing our capture.
+        _element.DispatcherQueue.TryEnqueue(() => _element.ReleasePointerCapture(e.Pointer));
     }
 }

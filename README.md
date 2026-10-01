@@ -1,6 +1,12 @@
 # BOW
 
-BOW is a Windows browser built with WinUI 3, .NET 8, and WebView2.
+BOW is a Windows browser built with WinUI 3, .NET 10, and WebView2.
+
+Settings > About shows the installed version, stable/preview release channel,
+and a manual update check. Startup checks are optional and off by default;
+BOW never automatically downloads or installs an update.
+See [update checks and native tests](docs/UPDATES-AND-TESTING.md) for privacy,
+test commands, and interactive-desktop requirements.
 
 ## Download
 

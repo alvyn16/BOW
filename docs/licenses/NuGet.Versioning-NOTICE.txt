@@ -1,0 +1,12 @@
+NuGet.Versioning 7.9.0
+Copyright (c) .NET Foundation and Contributors.
+Copyright (c) Microsoft Corporation.
+All rights reserved.
+
+Licensed under the Apache License, Version 2.0. See Apache-2.0.txt.
+Source: https://github.com/NuGet/NuGet.Client
+Package source commit: 977537e19c6be57fead1411e6cf05f936bf1baf4
+
+Software is distributed on an AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS
+OF ANY KIND, either express or implied. See the license for permissions and
+limitations.

@@ -214,6 +214,7 @@ public sealed class SidebarView : UserControl
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 CornerRadius = new CornerRadius(7)
             };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(selectButton, "Tab-" + tab.Id);
             // The row owns the hover state; the default Button hover creates an inset pill.
             selectButton.Resources["ButtonBackgroundPointerOver"] = transparent;
             selectButton.Resources["ButtonBackgroundPressed"] = transparent;
@@ -310,6 +311,7 @@ public sealed class SidebarView : UserControl
             void UpdateTab()
             {
                 title.Text = tab.Title;
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(selectButton, "Tab: " + tab.Title);
                 muteIcon.Visibility = tab.IsMuted ? Visibility.Visible : Visibility.Collapsed;
                 ToolTipService.SetToolTip(row, tab.IsSleeping ? $"{tab.Title} · Sleeping" : tab.Title);
                 if (tab.IsSleeping)
