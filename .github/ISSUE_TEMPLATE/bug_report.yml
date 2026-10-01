@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible BOW problem
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include passwords, tokens, or personal browsing history. Report security vulnerabilities using SECURITY.md.
+  - type: input
+    id: versions
+    attributes:
+      label: BOW, Windows, and WebView2 versions
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or sanitized logs
