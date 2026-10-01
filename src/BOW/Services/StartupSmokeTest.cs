@@ -17,6 +17,8 @@ internal static class StartupSmokeTest
         string? error = null;
         try
         {
+            if (File.Exists(WebViewRuntimeInstaller.InstallerPath))
+                await Task.Run(() => MicrosoftInstallerTrust.Verify(WebViewRuntimeInstaller.InstallerPath));
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null,
                 Path.Combine(Path.GetDirectoryName(reportPath)!, "webview-profile"), null);
             webView = new WebView2();

@@ -6,9 +6,11 @@ BOW is a Windows browser built with WinUI 3, .NET 8, and WebView2.
 
 Download the Windows x64 ZIP from [Releases](https://github.com/alvyn16/BOW/releases).
 Extract the entire archive and run `BOW.exe` from a writable folder.
-The portable package includes .NET and Windows App SDK dependencies; it needs
-the [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
-installed separately. Preview builds are unsigned.
+The portable package includes .NET, Windows App SDK dependencies, and Microsoft's
+signed WebView2 setup program. If the runtime is missing when you open a page,
+choose **Install WebView2** in BOW; setup downloads the Evergreen Runtime from
+Microsoft. Installation needs an internet connection. BOW preview builds are
+unsigned until a trusted code-signing certificate is available.
 See [installation, updates, and troubleshooting](docs/INSTALL.md).
 
 ## Build
@@ -47,6 +49,9 @@ To publish another release, update `<Version>` in `src/BOW/BOW.csproj`, add
 `docs/releases/v<version>.md`, merge the change, then push the matching `v<version>`
 tag. The tag workflow publishes the release only after these checks pass.
 Versions containing a suffix, such as `-preview.1`, are marked as prereleases.
+For builds signed with a trusted certificate already available in the Windows
+certificate store, see [code signing](docs/SIGNING.md). The default GitHub
+workflow produces unsigned previews; it has no signing identity configured.
 
 ## Browsing data
 

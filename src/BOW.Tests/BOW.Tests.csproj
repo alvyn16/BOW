@@ -32,5 +32,6 @@
     <Compile Include="..\BOW\Services\TabSleepPolicy.cs" Link="Services\TabSleepPolicy.cs" />
     <Compile Include="..\BOW\Services\PersistedUrl.cs" Link="Services\PersistedUrl.cs" />
     <Compile Include="..\BOW\Services\DownloadHistoryStore.cs" Link="Services\DownloadHistoryStore.cs" />
+    <Compile Include="..\BOW\Services\MicrosoftInstallerTrust.cs" Link="Services\MicrosoftInstallerTrust.cs" />
   </ItemGroup>
 </Project>

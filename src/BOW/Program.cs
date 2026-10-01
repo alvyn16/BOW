@@ -10,6 +10,20 @@ public static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--install-webview2")
+        {
+            try
+            {
+                Services.WebViewRuntimeInstaller.InstallAsync().GetAwaiter().GetResult();
+                Console.WriteLine("WebView2 setup completed.");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         var smokeReport = args.Length == 2 && args[0] == "--smoke-test"
             ? System.IO.Path.GetFullPath(args[1]) : null;
         try

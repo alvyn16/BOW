@@ -1,5 +1,8 @@
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\dist')
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\dist'),
+    [string]$RuntimeInstallerPath,
+    [string]$CertificateThumbprint,
+    [switch]$RequireSigning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +20,7 @@ $build = Join-Path $work 'build'
 $archiveName = "BOW-$version-win-x64.zip"
 $archive = Join-Path $OutputDirectory $archiveName
 if (Test-Path -LiteralPath $archive) { throw "Release archive already exists: $archive. Use a new output directory." }
+if ($RequireSigning -and -not $CertificateThumbprint) { throw 'A trusted signing certificate is required for this build.' }
 
 & dotnet publish $project -c Release -r win-x64 --self-contained true -p:Platform=x64 `
     "-p:OutputPath=$build\" -o $publish --nologo
@@ -29,6 +33,18 @@ foreach ($doc in @('LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md')) {
     Copy-Item -LiteralPath (Join-Path $repo $doc) -Destination $publish
 }
 Copy-Item -LiteralPath (Join-Path $repo 'docs\INSTALL.md') -Destination $publish
+$runtimeFolder = Join-Path $publish 'runtime'
+New-Item -ItemType Directory -Path $runtimeFolder -Force | Out-Null
+$installer = Join-Path $runtimeFolder 'MicrosoftEdgeWebview2Setup.exe'
+if ($RuntimeInstallerPath) {
+    Copy-Item -LiteralPath $RuntimeInstallerPath -Destination $installer
+}
+else { & (Join-Path $PSScriptRoot 'Get-WebView2Installer.ps1') -Destination $installer }
+$signature = Get-AuthenticodeSignature -LiteralPath $installer
+if ($signature.Status -ne 'Valid' -or
+    $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'Microsoft Corporation') {
+    throw 'The bundled WebView2 installer must have a valid Microsoft signature.'
+}
 
 # Preserve the notices supplied by every resolved package, including runtime packs.
 $assets = Get-Content -LiteralPath (Join-Path $repo 'src\BOW\obj\project.assets.json') -Raw | ConvertFrom-Json
@@ -58,6 +74,11 @@ foreach ($package in ($packages | Sort-Object -Unique)) {
     }
 }
 
+if ($CertificateThumbprint) {
+    & (Join-Path $PSScriptRoot 'Sign-Release.ps1') -Directory $publish -CertificateThumbprint $CertificateThumbprint
+}
+@{ version = $version; signed = [bool]$CertificateThumbprint; webView2Setup = 'Microsoft signed Evergreen bootstrapper' } |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $publish 'release.json') -Encoding utf8
 Compress-Archive -LiteralPath $publish -DestinationPath $archive -CompressionLevel Optimal
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath ($archive + '.sha256') -Value "$hash  $archiveName" -Encoding ascii
