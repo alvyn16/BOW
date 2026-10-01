@@ -1,0 +1,115 @@
+name: Windows CI and release
+
+on:
+  push:
+    branches: [main, 'codex/**']
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Build, test, and check startup
+    runs-on: windows-2022
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+      - name: Read version and validate release tag
+        id: version
+        env:
+          BUILD_REF: ${{ github.ref }}
+          BUILD_TAG: ${{ github.ref_name }}
+        run: |
+          [xml]$project = Get-Content src/BOW/BOW.csproj -Raw
+          $version = [string]$project.Project.PropertyGroup.Version
+          if ($env:BUILD_REF.StartsWith('refs/tags/') -and $env:BUILD_TAG -ne "v$version") {
+            throw "Tag must match the project version: v$version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Run unit tests
+        run: |
+          dotnet test src/BOW.Tests/BOW.Tests.csproj -c Release --logger "trx;LogFileName=unit.trx" --results-directory TestResults --nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed.' }
+      - name: Build portable release
+        run: ./scripts/Build-Release.ps1
+      - name: Ensure WebView2 runtime is installed
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw 'WebView2 installer signature could not be verified.'
+          }
+          $install = Start-Process $installer -ArgumentList '/silent', '/install' -PassThru -WindowStyle Hidden
+          if (-not $install.WaitForExit(180000)) { Stop-Process -Id $install.Id -Force; throw 'WebView2 install timed out.' }
+          if ($install.ExitCode -ne 0) { throw "WebView2 installation failed: $($install.ExitCode)" }
+      - name: Check startup from the extracted release
+        run: |
+          $archives = @(Get-ChildItem dist -Filter '*.zip')
+          if ($archives.Count -ne 1) { throw 'Expected exactly one release ZIP.' }
+          $archive = $archives[0]
+          $extract = Join-Path $env:RUNNER_TEMP 'BOW-extracted'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $extract
+          $executables = @(Get-ChildItem $extract -Recurse -Filter BOW.exe)
+          if ($executables.Count -ne 1) { throw 'Expected exactly one BOW.exe in the release.' }
+          ./scripts/Test-Startup.ps1 -Executable $executables[0].FullName -ReportDirectory TestResults/startup
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-test-reports
+          path: |
+            TestResults/*.trx
+            TestResults/startup/*.json
+          if-no-files-found: warn
+      - name: Upload portable release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: BOW-win-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: BOW-win-x64
+          path: dist
+      - name: Create release with verified artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        shell: bash
+        run: |
+          flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/*.zip dist/*.sha256 \
+            --verify-tag --title "BOW $RELEASE_VERSION" \
+            --notes-file "docs/releases/$RELEASE_TAG.md" "${flags[@]}"

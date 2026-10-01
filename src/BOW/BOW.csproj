@@ -22,9 +22,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyVersion>0.1.0</AssemblyVersion>
-    <FileVersion>0.1.0</FileVersion>
-    <InformationalVersion>0.1.0</InformationalVersion>
+    <Version>0.1.0-preview.1</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -72,6 +72,9 @@
   </Target>
   <Target Name="GenerateBowPri" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build\Generate-Pri.ps1&quot; -OutputDirectory &quot;$(TargetDir).&quot; -IntermediateDirectory &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath).&quot;" />
+  </Target>
+  <Target Name="CopyBowPublishResources" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
+    <Copy SourceFiles="$(TargetDir)resources.pri;$(TargetDir)App.xbf" DestinationFolder="$(PublishDir)" />
   </Target>
 
 </Project>

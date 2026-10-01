@@ -11,17 +11,26 @@ public partial class App : Application
 {
     private MainWindow? _mainWindow;
     private SessionAutoSaver? _sessionAutoSaver;
+    private readonly string? _smokeTestReport;
 
     public static BowStore Store { get; private set; } = null!;
     public static MainWindow? MainWindow { get; private set; }
 
-    public App()
+    public App() : this(null) { }
+
+    internal App(string? smokeTestReport)
     {
+        _smokeTestReport = smokeTestReport;
         InitializeComponent();
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (_smokeTestReport is not null)
+        {
+            _ = StartupSmokeTest.RunAsync(this, _smokeTestReport);
+            return;
+        }
         Store = new BowStore();
         _mainWindow = new MainWindow();
         _sessionAutoSaver = new SessionAutoSaver(Store,
