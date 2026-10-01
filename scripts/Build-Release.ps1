@@ -74,6 +74,12 @@ foreach ($package in ($packages | Sort-Object -Unique)) {
     }
 }
 
+$versioningNotices = Join-Path $noticeRoot 'nuget.versioning'
+New-Item -ItemType Directory -Path $versioningNotices -Force | Out-Null
+foreach ($notice in @('Apache-2.0.txt', 'NuGet.Versioning-NOTICE.txt')) {
+    Copy-Item -LiteralPath (Join-Path $repo "docs/licenses/$notice") -Destination $versioningNotices
+}
+
 if ($CertificateThumbprint) {
     & (Join-Path $PSScriptRoot 'Sign-Release.ps1') -Directory $publish -CertificateThumbprint $CertificateThumbprint
 }
